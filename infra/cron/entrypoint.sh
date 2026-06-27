@@ -18,9 +18,11 @@ day_to_dow() {
 AUTH_HEADER="Authorization: Bearer ${API_AUTH_TOKEN}"
 CURL_CMD="curl -fsS -m 280"
 
-# Build the crontab
+# Build the crontab. The nightly dreamer (default 00:00) refreshes Opinions from
+# real signals, then dreams on top of them — both behind the bearer token.
 CRONTAB="${DIGEST_MINUTE} ${DIGEST_HOUR} * * * ${CURL_CMD} -X POST \"${API_BASE}/digests/run\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1
-${FINANCE_SYNC_MINUTE} ${FINANCE_SYNC_HOUR} * * * ${CURL_CMD} -X POST \"${API_BASE}/finance/sync\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1"
+${FINANCE_SYNC_MINUTE} ${FINANCE_SYNC_HOUR} * * * ${CURL_CMD} -X POST \"${API_BASE}/finance/sync\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1
+${DREAM_MINUTE} ${DREAM_HOUR} * * * ( ${CURL_CMD} -X POST \"${API_BASE}/opinions/refresh\" -H \"${AUTH_HEADER}\" ; ${CURL_CMD} -X POST \"${API_BASE}/dreams/run\" -H \"${AUTH_HEADER}\" ) >/proc/1/fd/1 2>&1"
 
 if [ "${FINANCE_WEEKLY_ENABLED}" = "true" ]; then
     DOW="$(day_to_dow "${FINANCE_WEEKLY_DAY}")"

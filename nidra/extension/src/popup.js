@@ -114,22 +114,55 @@ function showTab(which) {
 
 async function runDream() {
   const out = $("#dream-out");
-  out.innerHTML = '<p class="empty">💤 Dreaming on your activity — on-device Gemma, ~10–20s…</p>';
+  out.innerHTML = '<p class="empty">💤 Refreshing opinions, then dreaming on-device — ~10–20s…</p>';
   let cfg = {};
   try { cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" }); } catch {}
-  const opts = { method: "POST", headers: {} };
-  let url;
+
   if (cfg.backendUrl) {
-    url = cfg.backendUrl.replace(/\/$/, "") + "/connectors/browser_activity/dream";
-    if (cfg.appToken) opts.headers.authorization = "Bearer " + cfg.appToken;
-  } else {
-    url = (cfg.collectorUrl || "http://localhost:8799") + "/dream";
+    // New pipeline: ground opinions from signals, dream on top, then list dreams.
+    const base = cfg.backendUrl.replace(/\/$/, "");
+    const headers = cfg.appToken ? { authorization: "Bearer " + cfg.appToken } : {};
+    try {
+      await fetch(base + "/opinions/refresh", { method: "POST", headers });
+      await fetch(base + "/dreams/run", { method: "POST", headers });
+      const data = await (await fetch(base + "/dreams", { headers })).json();
+      renderDreams(data.dreams || []);
+    } catch {
+      out.innerHTML =
+        '<p class="empty">Couldn\'t reach the dreamer. Run the Pragya backend and make sure Ollama is running.</p>';
+    }
+    return;
   }
+
+  // Fallback: the local collector's ephemeral dreamer.
   try {
-    renderDream(await (await fetch(url, opts)).json());
+    const url = (cfg.collectorUrl || "http://localhost:8799") + "/dream";
+    renderDream(await (await fetch(url, { method: "POST" })).json());
   } catch {
     out.innerHTML =
-      '<p class="empty">Couldn\'t reach the dreamer. Run the Pragya backend (or <code>npm run collector</code>) and make sure Ollama is running.</p>';
+      '<p class="empty">Couldn\'t reach the dreamer. Run <code>npm run collector</code> and make sure Ollama is running.</p>';
+  }
+}
+
+function renderDreams(dreams) {
+  const out = $("#dream-out");
+  out.innerHTML = "";
+  if (!dreams.length) {
+    out.append(el("p", "empty", "No dreams yet — capture some activity, then dream."));
+    return;
+  }
+  out.append(el("h3", null, "Dreams"));
+  for (const d of dreams) {
+    const c = el("div", "belief");
+    c.append(el("div", "belief-text", "💭 " + d.hypothesis));
+    const meta = el("div", "belief-meta");
+    const bar = el("div", "bar");
+    const fill = el("div", "bar-fill");
+    fill.style.width = Math.round((d.confidence || 0) * 100) + "%";
+    bar.append(fill);
+    meta.append(bar, el("span", "ev", d.kind || ""));
+    c.append(meta);
+    out.append(c);
   }
 }
 
