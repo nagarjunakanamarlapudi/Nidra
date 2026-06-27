@@ -31,6 +31,25 @@ class _FakeTelegram:
         self.sent.append((chat_id, text))
 
 
+async def test_run_surfaces_active_dreams(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Active dreams are woven into the digest prompt and marked surfaced (the
+    digest is the primary action surface)."""
+    from pragya_assistant.user_model.dreams import DreamStore, NewDream
+
+    engine = _FakeEngine()
+    store = DigestStore(session_factory)
+    dreams = DreamStore(session_factory)
+    await dreams.add([NewDream(hypothesis="Plan a Japan trip", kind="foresight", confidence=0.6)])
+
+    svc = DigestService(engine=engine, store=store, dreams=dreams)
+    await svc.run()
+
+    assert any("Japan trip" in p for p in engine.prompts)  # dream entered the digest prompt
+    assert (await dreams.active())[0].status == "surfaced"  # marked shown → enables ignored/TTL
+
+
 async def test_run_stores_and_pushes(session_factory: async_sessionmaker[AsyncSession]) -> None:
     engine = _FakeEngine()
     tg = _FakeTelegram()

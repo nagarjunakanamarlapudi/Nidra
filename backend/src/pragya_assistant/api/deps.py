@@ -39,6 +39,7 @@ from pragya_assistant.memory.db import create_engine, create_session_factory
 from pragya_assistant.memory.models import EMBEDDING_DIM
 from pragya_assistant.memory.service import MemoryService
 from pragya_assistant.tasks.store import TaskStore
+from pragya_assistant.user_model.dreams import DreamStore
 
 
 @dataclass
@@ -82,6 +83,7 @@ def build_components(settings: Settings) -> AppComponents:
         telegram=telegram,
         allowed_chat_ids=settings.telegram_allowed_chat_ids,
         timezone=settings.digest_timezone,
+        dreams=DreamStore(session_factory),
     )
     components = AppComponents(
         settings=settings,

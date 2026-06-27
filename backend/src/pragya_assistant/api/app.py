@@ -20,6 +20,7 @@ from pragya_assistant.api.routes import (
     connectors,
     conversations,
     digests,
+    dreams,
     finance,
     health,
 )
@@ -70,5 +71,6 @@ def create_app(settings: Settings, *, components: AppComponents | None = None) -
     app.include_router(connectors.router)
     app.include_router(connectors.oauth_router)
     app.include_router(browser_activity.router)
+    app.include_router(dreams.router)
     app.include_router(telegram_webhook.router)
     return app

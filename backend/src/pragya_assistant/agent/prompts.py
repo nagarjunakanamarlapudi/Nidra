@@ -38,6 +38,19 @@ def build_digest_prompt(today: str) -> str:
     )
 
 
+def build_dream_surfacing_block(hypotheses: list[str]) -> str:
+    """A digest addendum that asks the engine to weave in proactive dreams — only
+    if they fit naturally. Dreams are speculative, so they're surfaced softly."""
+    if not hypotheses:
+        return ""
+    items = "\n".join(f"- {h}" for h in hypotheses)
+    return (
+        "\n\nFinally, if (and only if) it fits naturally, gently raise one or two of "
+        "these proactive hunches — phrase them as optional suggestions, not facts, "
+        "and don't force them:\n" + items
+    )
+
+
 def build_weekly_finance_prompt(today: str) -> str:
     """Prompt for the weekly finance digest."""
     return (

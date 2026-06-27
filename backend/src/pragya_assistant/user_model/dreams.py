@@ -62,6 +62,24 @@ class DreamStore:
             )
             return list((await s.execute(stmt)).scalars().all())
 
+    async def mark_surfaced(self, ids: list[int]) -> None:
+        """proposed → surfaced (it was shown to the user). Lets us tell a dream the
+        user saw-and-ignored from one never surfaced."""
+        if not ids:
+            return
+        async with self._sf() as s:
+            rows = (await s.execute(select(Dream).where(Dream.id.in_(ids)))).scalars().all()
+            for d in rows:
+                if d.status == "proposed":
+                    d.status = "surfaced"
+            await s.commit()
+
+    async def hypothesis_of(self, dream_id: int) -> str | None:
+        async with self._sf() as s:
+            return (
+                await s.execute(select(Dream.hypothesis).where(Dream.id == dream_id))
+            ).scalar_one_or_none()
+
     async def resolve(
         self,
         dream_id: int,
