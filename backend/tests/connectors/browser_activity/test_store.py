@@ -105,6 +105,26 @@ async def test_recent_filters_by_type_so_new_events_dont_evict_reading(
     assert len(reading) == 1 and reading[0].title == "An article"
 
 
+async def test_recent_time_window_for_pointintime_replay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """before/since windows enable backtesting without look-ahead leakage."""
+    store = BrowserActivityEventStore(session_factory)
+    await store.add_events(
+        KEY,
+        [
+            IngestedEvent(client_id="p1", event_type="search", ts=dt.datetime(2026, 6, 1)),
+            IngestedEvent(client_id="p2", event_type="search", ts=dt.datetime(2026, 6, 10)),
+            IngestedEvent(client_id="f1", event_type="search", ts=dt.datetime(2026, 6, 20)),
+        ],
+    )
+    T = dt.datetime(2026, 6, 15)
+    before = await store.recent(KEY, before=T)
+    after = await store.recent(KEY, since=T)
+    assert {e.client_id for e in before} == {"p1", "p2"}  # strictly before T
+    assert {e.client_id for e in after} == {"f1"}  # at/after T
+
+
 async def test_add_events_upserts_by_client_id(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

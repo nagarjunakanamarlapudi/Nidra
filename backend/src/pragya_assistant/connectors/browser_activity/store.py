@@ -72,17 +72,25 @@ class BrowserActivityEventStore:
         *,
         limit: int = 200,
         types: list[str] | None = None,
+        before: dt.datetime | None = None,
+        since: dt.datetime | None = None,
     ) -> list[BrowserActivityEvent]:
         """Most-recent events, newest first. ``types`` restricts to those
         ``event_type``s — used to give each event family its OWN window, so a
         flood of high-frequency interaction/impression rows can't evict the
-        reading/search/email/calendar rows the dreamer's digest depends on."""
+        reading/search/email/calendar rows the dreamer's digest depends on.
+        ``before`` (ts < before) and ``since`` (ts >= since) bound the time
+        window — used for point-in-time backtest replay (no look-ahead)."""
         async with self._sf() as s:
             stmt = select(BrowserActivityEvent).where(
                 BrowserActivityEvent.connector_key == connector_key
             )
             if types is not None:
                 stmt = stmt.where(BrowserActivityEvent.event_type.in_(types))
+            if before is not None:
+                stmt = stmt.where(BrowserActivityEvent.ts < before)
+            if since is not None:
+                stmt = stmt.where(BrowserActivityEvent.ts >= since)
             stmt = stmt.order_by(BrowserActivityEvent.ts.desc()).limit(limit)
             return list((await s.execute(stmt)).scalars().all())
 
