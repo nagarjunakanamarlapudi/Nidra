@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Review your booking</title>
+  </head>
+  <body>
+    <h1>Review your booking</h1>
+
+    <fieldset>
+      <legend>Add-ons</legend>
+      <label><input type="checkbox" role="switch" name="prepaid_fuel" /> Prepaid Fuel — $69.99 / one-time</label>
+      <label><input type="checkbox" role="switch" name="toll_pass" /> Toll pass/Express lane — $34.99 / day</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Payment methods</legend>
+      <label><input type="radio" name="pm" value="card" /> Credit or debit card</label>
+      <label><input type="radio" name="pm" value="saved" /> Visa ••4242</label>
+      <label><input type="radio" name="pm" value="applepay" /> Apple Pay</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Card number</legend>
+      <label>Card number <input type="text" name="cardNumber" autocomplete="cc-number" /></label>
+    </fieldset>
+
+    <button type="button" id="pay">Pay and book</button>
+  </body>
+</html>

@@ -11,6 +11,9 @@ export const EVENT_TYPES = Object.freeze([
   "calendar", // activity in a calendar client (gcal)
   "form_input", // typed into a (non-sensitive) form field
   "selection", // selected / highlighted text
+  "impression", // a decision-point (choice elements / offers / CTAs) was shown
+  "interaction", // a semantic click / toggle / select — the decision, never the raw value
+  "action", // a funnel milestone (reached_checkout / submitted / completed / abandoned)
 ]);
 
 export const SOURCES = Object.freeze({
@@ -37,7 +40,7 @@ export function makeEvent(type, fields = {}) {
     title: fields.title ?? null,
     source: fields.source ?? SOURCES.WEB,
     data: fields.data ?? {},
-    metrics: fields.metrics ?? {}, // { dwellMs, scrollPct, readPct }
+    metrics: fields.metrics ?? {}, // { dwellMs, scrollPct, readPct, latencyMs }
     redacted: Boolean(fields.redacted),
   };
 }

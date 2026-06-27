@@ -5,10 +5,13 @@ import { api } from "./browser-api.js";
 import {
   analyzePage,
   classify,
+  describeImpression,
   describeInput,
+  describeInteraction,
   isSensitiveInput,
   redactString,
 } from "./recognizers.js";
+import { gate } from "./gate.js";
 import { makeEvent } from "./schema.js";
 
 const DEFAULT_DENYLIST = [
@@ -19,8 +22,19 @@ const DEFAULT_DENYLIST = [
 let cfg = { paused: false, denylist: DEFAULT_DENYLIST, captureForms: true, captureSelections: true };
 let started = false;
 let pageStart = Date.now();
+let pageStartPerf = 0; // performance.now() baseline for decision latency
 let maxScrollPct = 0;
 let currentPageId = null;
+
+// Decision capture state (reset per page load).
+const IMPRESSION_CAP = 40;
+let seenKeys = new Set();
+let recentInteractions = new Map(); // elementKey -> {action, t} — dedupe click+change double-fire
+let impressionCount = 0;
+let impressionObserver = null;
+let funnelReached = false;
+let submitted = false;
+const FUNNEL_RE = /checkout|cart|payment|booking|\breview\b|\border\b|subscribe/i;
 
 const host = () => location.hostname.replace(/^www\./, "");
 const denylisted = () => cfg.denylist.some((d) => host() === d || host().endsWith("." + d));
@@ -34,8 +48,11 @@ function scrollPct() {
 }
 
 function send(event) {
+  // The privacy gate is the single chokepoint EVERY producer passes through.
+  const gated = gate(event);
+  if (!gated) return; // dropped: sensitive / unknown control / all-PII label
   try {
-    const r = api.runtime.sendMessage({ type: "nidra-event", event });
+    const r = api.runtime.sendMessage({ type: "nidra-event", event: gated });
     if (r && typeof r.catch === "function") r.catch(() => {});
   } catch {
     /* extension context invalidated (e.g. reload) — ignore */
@@ -58,13 +75,107 @@ function emitPrimary(reason) {
 function newPage() {
   currentPageId = uuid();
   pageStart = Date.now();
+  pageStartPerf = performance.now();
   maxScrollPct = 0;
+  seenKeys = new Set();
+  recentInteractions = new Map();
+  impressionCount = 0;
+  funnelReached = false;
+  submitted = false;
+}
+
+// --- decisions: interaction / impression / action ---
+// Each carries context_id = the page-load id so the backend can correlate
+// "shown -> picked -> reached/abandoned" within one decision.
+
+const DECISION_CONTROLS = "a,button,select,input,[role=switch],[role=radio],[role=checkbox],[role=button],[role=tab],[role=menuitem],[role=option]";
+
+function onInteraction(target) {
+  if (cfg.paused || denylisted()) return;
+  const el = target?.closest?.(DECISION_CONTROLS) || target;
+  const desc = describeInteraction(el);
+  if (!desc) return;
+  // Dedupe the click+change pair (and rapid repeats) for the same control+state.
+  const now = performance.now();
+  const prev = recentInteractions.get(desc.elementKey);
+  if (prev && prev.action === desc.action && now - prev.t < 700) return;
+  recentInteractions.set(desc.elementKey, { action: desc.action, t: now });
+  const ev = makeEvent("interaction", {
+    ts: Date.now(), url: location.href, domain: host(), title: document.title,
+    source: classify(location).source, data: desc,
+  });
+  ev.id = uuid();
+  ev.context_id = currentPageId;
+  ev.metrics = { latencyMs: Math.max(0, Math.round(performance.now() - pageStartPerf)) };
+  send(ev);
+}
+
+function onImpression(el) {
+  if (cfg.paused || denylisted() || impressionCount >= IMPRESSION_CAP) return;
+  const desc = describeImpression(el);
+  if (!desc) return;
+  if (seenKeys.has(desc.elementKey)) return; // first-seen only; stable across re-render
+  seenKeys.add(desc.elementKey);
+  impressionCount += 1;
+  const ev = makeEvent("impression", {
+    ts: Date.now(), url: location.href, domain: host(), title: document.title,
+    source: classify(location).source, data: desc,
+  });
+  ev.id = currentPageId + ":" + desc.elementKey; // dedupe key (upsert, not double-count)
+  ev.context_id = currentPageId;
+  send(ev);
+}
+
+function armImpressions() {
+  if (cfg.paused || denylisted() || typeof IntersectionObserver === "undefined") return;
+  if (!impressionObserver) {
+    impressionObserver = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          onImpression(e.target);
+          impressionObserver.unobserve(e.target);
+        }
+      },
+      { threshold: 0.5 }
+    );
+  }
+  let armed = 0;
+  for (const el of document.querySelectorAll(DECISION_CONTROLS)) {
+    if (armed >= IMPRESSION_CAP) break;
+    try { impressionObserver.observe(el); armed += 1; } catch { /* detached */ }
+  }
+}
+
+function emitAction(milestone, extra = {}) {
+  if (cfg.paused || denylisted()) return;
+  const ev = makeEvent("action", {
+    ts: Date.now(), url: location.href, domain: host(), title: document.title,
+    source: classify(location).source, data: { milestone, funnel: "checkout", ...extra },
+  });
+  ev.id = uuid();
+  ev.context_id = currentPageId;
+  send(ev);
+}
+
+function maybeFunnel() {
+  if (!funnelReached && FUNNEL_RE.test(location.pathname + " " + location.href)) {
+    funnelReached = true;
+    emitAction("reached_checkout");
+  }
 }
 
 // --- behavior listeners ---
 addEventListener("scroll", () => { maxScrollPct = Math.max(maxScrollPct, scrollPct()); }, { passive: true });
 addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") emitPrimary("flush"); });
-addEventListener("pagehide", () => emitPrimary("flush"));
+addEventListener("pagehide", () => {
+  emitPrimary("flush");
+  if (funnelReached && !submitted) emitAction("abandoned"); // left a flow without finishing
+});
+
+// Interaction capture: semantic clicks/toggles/selects, routed through the gate.
+addEventListener("click", (e) => onInteraction(e.target), true);
+addEventListener("change", (e) => onInteraction(e.target), true);
 
 addEventListener(
   "submit",
@@ -84,6 +195,8 @@ addEventListener(
         send(ev);
       }
     }
+    submitted = true;
+    emitAction("submitted"); // reached the end of a flow
   },
   true
 );
@@ -111,7 +224,7 @@ function onRoute() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
   newPage();
-  setTimeout(() => emitPrimary("spa"), 800);
+  setTimeout(() => { emitPrimary("spa"); maybeFunnel(); armImpressions(); }, 800);
 }
 function watchSpa() {
   addEventListener("hashchange", onRoute);
@@ -134,7 +247,7 @@ async function init() {
   } catch {}
   if (denylisted()) return;
   newPage();
-  setTimeout(() => emitPrimary("load"), 600); // let SPA content settle
+  setTimeout(() => { emitPrimary("load"); maybeFunnel(); armImpressions(); }, 600); // let content settle
   watchSpa();
 }
 init();

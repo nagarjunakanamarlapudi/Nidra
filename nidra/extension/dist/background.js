@@ -170,8 +170,14 @@
     // activity in a calendar client (gcal)
     "form_input",
     // typed into a (non-sensitive) form field
-    "selection"
+    "selection",
     // selected / highlighted text
+    "impression",
+    // a decision-point (choice elements / offers / CTAs) was shown
+    "interaction",
+    // a semantic click / toggle / select — the decision, never the raw value
+    "action"
+    // a funnel milestone (reached_checkout / submitted / completed / abandoned)
   ]);
   var SOURCES = Object.freeze({
     GMAIL: "gmail",
@@ -193,7 +199,7 @@
       source: fields.source ?? SOURCES.WEB,
       data: fields.data ?? {},
       metrics: fields.metrics ?? {},
-      // { dwellMs, scrollPct, readPct }
+      // { dwellMs, scrollPct, readPct, latencyMs }
       redacted: Boolean(fields.redacted)
     };
   }
@@ -209,6 +215,8 @@
   var EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
   var CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
   var SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+  var PHONE_RE = /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g;
+  var DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g;
   var LONG_NUM_RE = /\b\d{9,}\b/g;
   function redactString(input) {
     if (typeof input !== "string" || !input) return { value: input ?? null, redacted: false, kinds: [] };
@@ -226,11 +234,20 @@
       kinds.push("ssn");
       value = value.replace(SSN_RE, "[ssn]");
     }
+    if (PHONE_RE.test(value)) {
+      kinds.push("phone");
+      value = value.replace(PHONE_RE, "[phone]");
+    }
+    if (DATE_RE.test(value)) {
+      kinds.push("date");
+      value = value.replace(DATE_RE, "[date]");
+    }
     if (LONG_NUM_RE.test(value)) {
       kinds.push("number");
       value = value.replace(LONG_NUM_RE, "[number]");
     }
-    EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
+    EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = 0;
+    PHONE_RE.lastIndex = DATE_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
     return { value, redacted: kinds.length > 0, kinds };
   }
   var SEARCH_HOSTS = {

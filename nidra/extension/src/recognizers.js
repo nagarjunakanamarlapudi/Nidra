@@ -58,19 +58,27 @@ function visibleText(doc) {
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const CARD_RE = /\b(?:\d[ -]?){13,19}\b/g; // credit-card-ish runs
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
-const LONG_NUM_RE = /\b\d{9,}\b/g; // account/phone-ish
+// Phone with separators, e.g. (415) 555-1234 / 415-555-1234 / 415.555.1234.
+const PHONE_RE = /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g;
+// A full date (with year) — DOB-ish: 03/14/1990, 14-03-90.
+const DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g;
+const LONG_NUM_RE = /\b\d{9,}\b/g; // account/long-id-ish
 
 /** Mask PII inside a free-text string. Returns {value, redacted, kinds}. */
 export function redactString(input) {
   if (typeof input !== "string" || !input) return { value: input ?? null, redacted: false, kinds: [] };
   const kinds = [];
   let value = input;
+  // Order matters: email/card/ssn/phone/date before the generic long-number catch.
   if (EMAIL_RE.test(value)) { kinds.push("email"); value = value.replace(EMAIL_RE, "[email]"); }
   if (CARD_RE.test(value)) { kinds.push("card"); value = value.replace(CARD_RE, "[card]"); }
   if (SSN_RE.test(value)) { kinds.push("ssn"); value = value.replace(SSN_RE, "[ssn]"); }
+  if (PHONE_RE.test(value)) { kinds.push("phone"); value = value.replace(PHONE_RE, "[phone]"); }
+  if (DATE_RE.test(value)) { kinds.push("date"); value = value.replace(DATE_RE, "[date]"); }
   if (LONG_NUM_RE.test(value)) { kinds.push("number"); value = value.replace(LONG_NUM_RE, "[number]"); }
   // reset lastIndex on the global regexes we .test()ed above
-  EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
+  EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = 0;
+  PHONE_RE.lastIndex = DATE_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
   return { value, redacted: kinds.length > 0, kinds };
 }
 
@@ -101,6 +109,136 @@ export function describeInput(el, { maxLen = 200 } = {}) {
   const raw = (el.value || "").slice(0, maxLen);
   const { value, redacted } = redactString(raw);
   return { name, kind: isSearch ? "search" : type, valueLength: (el.value || "").length, value, redacted };
+}
+
+// --------------------- interactions / impressions ---------------------
+// Semantic descriptors for on-page DECISIONS — the abstract role of a control,
+// not its raw value. Domain-agnostic: works for any site's options/toggles.
+
+const CONTROL_BY_ROLE = {
+  switch: "toggle", checkbox: "checkbox", radio: "radio", combobox: "dropdown",
+  listbox: "dropdown", button: "button", link: "link", tab: "tab", menuitem: "menuitem",
+  slider: "slider", spinbutton: "stepper", option: "radio",
+};
+
+/** Map a DOM element to a control kind (toggle/radio/dropdown/button/...) or null. */
+export function controlKind(el) {
+  if (!el || !el.getAttribute) return null;
+  const role = (el.getAttribute("role") || "").toLowerCase();
+  if (CONTROL_BY_ROLE[role]) return CONTROL_BY_ROLE[role];
+  const tag = (el.tagName || "").toLowerCase();
+  const type = (el.getAttribute("type") || el.type || "").toLowerCase();
+  if (tag === "select") return "dropdown";
+  if (tag === "a") return "link";
+  if (tag === "button") return "button";
+  if (tag === "input") {
+    if (type === "checkbox") return "checkbox";
+    if (type === "radio") return "radio";
+    if (type === "range") return "slider";
+    if (type === "submit" || type === "button") return "button";
+  }
+  return null;
+}
+
+/** Accessible name of a control: aria-label, associated <label>, or text. */
+export function accessibleName(el) {
+  if (!el) return "";
+  const aria = el.getAttribute?.("aria-label");
+  if (aria) return aria.trim();
+  // wrapping <label> or label[for=id]
+  const lbl = el.closest?.("label");
+  if (lbl) return (lbl.textContent || "").replace(/\s+/g, " ").trim();
+  const id = el.id;
+  if (id && el.ownerDocument) {
+    const forLbl = el.ownerDocument.querySelector(`label[for="${id}"]`);
+    if (forLbl) return (forLbl.textContent || "").replace(/\s+/g, " ").trim();
+  }
+  return (el.textContent || el.value || "").replace(/\s+/g, " ").trim();
+}
+
+/** The semantic section a control belongs to (fieldset legend / aria group / heading). */
+export function sectionLabel(el) {
+  if (!el || !el.closest) return null;
+  const fs = el.closest("fieldset");
+  const legend = fs?.querySelector("legend");
+  if (legend) return (legend.textContent || "").replace(/\s+/g, " ").trim();
+  const group = el.closest('[role="group"], [role="radiogroup"], section, [aria-labelledby]');
+  if (group) {
+    const labelledby = group.getAttribute?.("aria-labelledby");
+    const ref = labelledby && el.ownerDocument?.getElementById(labelledby);
+    if (ref) return (ref.textContent || "").replace(/\s+/g, " ").trim();
+    const aria = group.getAttribute?.("aria-label");
+    if (aria) return aria.trim();
+    const heading = group.querySelector?.("h1,h2,h3,h4,legend");
+    if (heading) return (heading.textContent || "").replace(/\s+/g, " ").trim();
+  }
+  return null;
+}
+
+function checkedState(el) {
+  const role = (el.getAttribute?.("role") || "").toLowerCase();
+  if (typeof el.checked === "boolean") return el.checked;
+  const aria = el.getAttribute?.("aria-checked") ?? el.getAttribute?.("aria-pressed") ?? el.getAttribute?.("aria-selected");
+  if (aria != null) return aria === "true";
+  void role;
+  return null;
+}
+
+/** Bounded, position-independent key for an element: role+group+label signature.
+ *  Stable across re-renders / virtualized list recycling. */
+export function elementKey(el) {
+  const control = controlKind(el) || "el";
+  const group = sectionLabel(el) || "";
+  const label = accessibleName(el).slice(0, 80);
+  let h = 0;
+  const sig = `${control}|${group}|${label}`;
+  for (let i = 0; i < sig.length; i++) h = (Math.imul(31, h) + sig.charCodeAt(i)) | 0;
+  return `${control}:${(h >>> 0).toString(36)}`;
+}
+
+/** Describe a semantic interaction with a control, or null if not a control. */
+export function describeInteraction(el) {
+  const control = controlKind(el);
+  if (!control) return null;
+  const label = redactString(accessibleName(el).slice(0, 120)).value;
+  const group = sectionLabel(el);
+  const checked = checkedState(el);
+  let action = "select";
+  let value = null;
+  let valueClass = "text_safe";
+  if (control === "toggle" || control === "checkbox") {
+    action = checked ? "toggle_on" : "toggle_off";
+    value = checked ? "on" : "off";
+    valueClass = "boolean";
+  } else if (control === "radio") {
+    action = "choose";
+    value = label;
+    valueClass = "enum";
+  } else if (control === "dropdown") {
+    action = "select";
+    const sel = el.selectedOptions?.[0]?.textContent || el.value || null;
+    value = sel ? redactString(String(sel)).value : null;
+    valueClass = "enum";
+  } else if (control === "stepper" || control === "slider") {
+    action = "step";
+    value = el.value ?? null;
+    valueClass = "numeric";
+  } else {
+    action = control === "link" ? "open" : "click";
+  }
+  return { action, control, label, group, value, valueClass, elementKey: elementKey(el) };
+}
+
+/** Describe a decision-point impression: a choice element / offer / CTA shown. */
+export function describeImpression(el) {
+  const control = controlKind(el);
+  if (!control) return null;
+  return {
+    control,
+    label: redactString(accessibleName(el).slice(0, 120)).value,
+    group: sectionLabel(el),
+    elementKey: elementKey(el),
+  };
 }
 
 // ----------------------------- classify -----------------------------

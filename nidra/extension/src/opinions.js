@@ -37,6 +37,9 @@ export function deriveOpinions(events = []) {
   const searches = events.filter((e) => e.type === "search");
   const emails = events.filter((e) => e.type === "email");
   const calendar = events.filter((e) => e.type === "calendar");
+  const interactions = events.filter((e) => e.type === "interaction");
+  const impressions = events.filter((e) => e.type === "impression");
+  const actions = events.filter((e) => e.type === "action");
 
   // ---- interests (weighted token frequency across tags/titles/queries) ----
   const interest = new Map();
@@ -167,6 +170,59 @@ export function deriveOpinions(events = []) {
     });
   }
 
+  // ---- decision style (from the interaction/impression/action substrate) ----
+  const lat = interactions.map((e) => e.metrics?.latencyMs).filter((x) => typeof x === "number" && x >= 0);
+  const avgLatencyMs = lat.length ? Math.round(lat.reduce((a, b) => a + b, 0) / lat.length) : null;
+  // Fast decisions → decisive. Normalized over an 8s ceiling.
+  const decisiveness = avgLatencyMs == null ? null : Math.round((1 - Math.min(1, avgLatencyMs / 8000)) * 100) / 100;
+  // Reversals: a control touched more than once → reconsidering.
+  const byKey = new Map();
+  for (const e of interactions) bump(byKey, e.data?.elementKey);
+  const deliberation = [...byKey.values()].filter((n) => n > 1).length;
+  const reached = actions.filter((e) => /reached/.test(e.data?.milestone || "")).length;
+  const abandonedN = actions.filter((e) => e.data?.milestone === "abandoned").length;
+  const abandonmentRate = reached ? Math.round((abandonedN / reached) * 100) / 100 : abandonedN ? 1 : 0;
+  const groupSet = new Set();
+  for (const e of [...impressions, ...interactions]) if (e.data?.group) groupSet.add(e.data.group);
+  const decisionStyle = {
+    interactions: interactions.length,
+    impressions: impressions.length,
+    actions: actions.length,
+    avgLatencyMs,
+    decisiveness,
+    deliberation,
+    abandonmentRate,
+    comparisonBreadth: groupSet.size,
+  };
+
+  if (interactions.length >= 2 && decisiveness != null) {
+    beliefs.push({
+      statement:
+        decisiveness >= 0.6
+          ? `Decisive — acts quickly on choices (avg ~${avgLatencyMs}ms)`
+          : `Deliberate — takes time over choices (avg ~${avgLatencyMs}ms)`,
+      confidence: conf(interactions.length, 5),
+      evidence: interactions.length,
+      provenance: ["interaction.metrics.latencyMs"],
+    });
+  }
+  if (deliberation >= 1) {
+    beliefs.push({
+      statement: `Reconsiders choices (${deliberation} reversal${deliberation > 1 ? "s" : ""} on the same control)`,
+      confidence: conf(deliberation, 3),
+      evidence: deliberation,
+      provenance: ["interaction"],
+    });
+  }
+  if (abandonedN >= 1) {
+    beliefs.push({
+      statement: `Abandoned ${abandonedN} flow${abandonedN > 1 ? "s" : ""} before completing`,
+      confidence: conf(abandonedN, 3),
+      evidence: abandonedN,
+      provenance: ["action.milestone"],
+    });
+  }
+
   return {
     generatedFrom: events.length,
     counts: {
@@ -174,12 +230,16 @@ export function deriveOpinions(events = []) {
       search: searches.length,
       email: emails.length,
       calendar: calendar.length,
+      interaction: interactions.length,
+      impression: impressions.length,
+      action: actions.length,
       total: events.length,
     },
     interests,
     readingTaste,
     activeProjects,
     routines: { byHour, peakHours },
+    decisionStyle,
     beliefs,
   };
 }

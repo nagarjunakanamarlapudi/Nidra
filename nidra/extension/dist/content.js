@@ -17,8 +17,14 @@
     // activity in a calendar client (gcal)
     "form_input",
     // typed into a (non-sensitive) form field
-    "selection"
+    "selection",
     // selected / highlighted text
+    "impression",
+    // a decision-point (choice elements / offers / CTAs) was shown
+    "interaction",
+    // a semantic click / toggle / select — the decision, never the raw value
+    "action"
+    // a funnel milestone (reached_checkout / submitted / completed / abandoned)
   ]);
   var SOURCES = Object.freeze({
     GMAIL: "gmail",
@@ -40,7 +46,7 @@
       source: fields.source ?? SOURCES.WEB,
       data: fields.data ?? {},
       metrics: fields.metrics ?? {},
-      // { dwellMs, scrollPct, readPct }
+      // { dwellMs, scrollPct, readPct, latencyMs }
       redacted: Boolean(fields.redacted)
     };
   }
@@ -86,6 +92,8 @@
   var EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
   var CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
   var SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+  var PHONE_RE = /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g;
+  var DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g;
   var LONG_NUM_RE = /\b\d{9,}\b/g;
   function redactString(input) {
     if (typeof input !== "string" || !input) return { value: input ?? null, redacted: false, kinds: [] };
@@ -103,11 +111,20 @@
       kinds.push("ssn");
       value = value.replace(SSN_RE, "[ssn]");
     }
+    if (PHONE_RE.test(value)) {
+      kinds.push("phone");
+      value = value.replace(PHONE_RE, "[phone]");
+    }
+    if (DATE_RE.test(value)) {
+      kinds.push("date");
+      value = value.replace(DATE_RE, "[date]");
+    }
     if (LONG_NUM_RE.test(value)) {
       kinds.push("number");
       value = value.replace(LONG_NUM_RE, "[number]");
     }
-    EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
+    EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = 0;
+    PHONE_RE.lastIndex = DATE_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
     return { value, redacted: kinds.length > 0, kinds };
   }
   var SENSITIVE_NAME_RE = /(pass|pwd|card|cc-|cvv|cvc|ssn|secret|otp|\bpin\b|security|account.?number|routing|token|auth)/i;
@@ -130,6 +147,124 @@
     const raw = (el.value || "").slice(0, maxLen);
     const { value, redacted } = redactString(raw);
     return { name, kind: isSearch ? "search" : type, valueLength: (el.value || "").length, value, redacted };
+  }
+  var CONTROL_BY_ROLE = {
+    switch: "toggle",
+    checkbox: "checkbox",
+    radio: "radio",
+    combobox: "dropdown",
+    listbox: "dropdown",
+    button: "button",
+    link: "link",
+    tab: "tab",
+    menuitem: "menuitem",
+    slider: "slider",
+    spinbutton: "stepper",
+    option: "radio"
+  };
+  function controlKind(el) {
+    if (!el || !el.getAttribute) return null;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    if (CONTROL_BY_ROLE[role]) return CONTROL_BY_ROLE[role];
+    const tag = (el.tagName || "").toLowerCase();
+    const type = (el.getAttribute("type") || el.type || "").toLowerCase();
+    if (tag === "select") return "dropdown";
+    if (tag === "a") return "link";
+    if (tag === "button") return "button";
+    if (tag === "input") {
+      if (type === "checkbox") return "checkbox";
+      if (type === "radio") return "radio";
+      if (type === "range") return "slider";
+      if (type === "submit" || type === "button") return "button";
+    }
+    return null;
+  }
+  function accessibleName(el) {
+    if (!el) return "";
+    const aria = el.getAttribute?.("aria-label");
+    if (aria) return aria.trim();
+    const lbl = el.closest?.("label");
+    if (lbl) return (lbl.textContent || "").replace(/\s+/g, " ").trim();
+    const id = el.id;
+    if (id && el.ownerDocument) {
+      const forLbl = el.ownerDocument.querySelector(`label[for="${id}"]`);
+      if (forLbl) return (forLbl.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    return (el.textContent || el.value || "").replace(/\s+/g, " ").trim();
+  }
+  function sectionLabel(el) {
+    if (!el || !el.closest) return null;
+    const fs = el.closest("fieldset");
+    const legend = fs?.querySelector("legend");
+    if (legend) return (legend.textContent || "").replace(/\s+/g, " ").trim();
+    const group = el.closest('[role="group"], [role="radiogroup"], section, [aria-labelledby]');
+    if (group) {
+      const labelledby = group.getAttribute?.("aria-labelledby");
+      const ref = labelledby && el.ownerDocument?.getElementById(labelledby);
+      if (ref) return (ref.textContent || "").replace(/\s+/g, " ").trim();
+      const aria = group.getAttribute?.("aria-label");
+      if (aria) return aria.trim();
+      const heading = group.querySelector?.("h1,h2,h3,h4,legend");
+      if (heading) return (heading.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    return null;
+  }
+  function checkedState(el) {
+    const role = (el.getAttribute?.("role") || "").toLowerCase();
+    if (typeof el.checked === "boolean") return el.checked;
+    const aria = el.getAttribute?.("aria-checked") ?? el.getAttribute?.("aria-pressed") ?? el.getAttribute?.("aria-selected");
+    if (aria != null) return aria === "true";
+    return null;
+  }
+  function elementKey(el) {
+    const control = controlKind(el) || "el";
+    const group = sectionLabel(el) || "";
+    const label = accessibleName(el).slice(0, 80);
+    let h = 0;
+    const sig = `${control}|${group}|${label}`;
+    for (let i = 0; i < sig.length; i++) h = Math.imul(31, h) + sig.charCodeAt(i) | 0;
+    return `${control}:${(h >>> 0).toString(36)}`;
+  }
+  function describeInteraction(el) {
+    const control = controlKind(el);
+    if (!control) return null;
+    const label = redactString(accessibleName(el).slice(0, 120)).value;
+    const group = sectionLabel(el);
+    const checked = checkedState(el);
+    let action = "select";
+    let value = null;
+    let valueClass = "text_safe";
+    if (control === "toggle" || control === "checkbox") {
+      action = checked ? "toggle_on" : "toggle_off";
+      value = checked ? "on" : "off";
+      valueClass = "boolean";
+    } else if (control === "radio") {
+      action = "choose";
+      value = label;
+      valueClass = "enum";
+    } else if (control === "dropdown") {
+      action = "select";
+      const sel = el.selectedOptions?.[0]?.textContent || el.value || null;
+      value = sel ? redactString(String(sel)).value : null;
+      valueClass = "enum";
+    } else if (control === "stepper" || control === "slider") {
+      action = "step";
+      value = el.value ?? null;
+      valueClass = "numeric";
+    } else {
+      action = control === "link" ? "open" : "click";
+    }
+    return { action, control, label, group, value, valueClass, elementKey: elementKey(el) };
+  }
+  function describeImpression(el) {
+    const control = controlKind(el);
+    if (!control) return null;
+    return {
+      control,
+      label: redactString(accessibleName(el).slice(0, 120)).value,
+      group: sectionLabel(el),
+      elementKey: elementKey(el)
+    };
   }
   var SEARCH_HOSTS = {
     "google.": "google",
@@ -266,6 +401,50 @@
     return makeEvent("pageview", { ...base, data: { wordCount: art.wordCount } });
   }
 
+  // extension/src/gate.js
+  var DECISION_TYPES = /* @__PURE__ */ new Set(["interaction", "impression", "action"]);
+  var SAFE_CONTROLS = /* @__PURE__ */ new Set([
+    "toggle",
+    "checkbox",
+    "radio",
+    "dropdown",
+    "button",
+    "link",
+    "stepper",
+    "slider",
+    "tab",
+    "card",
+    "menuitem"
+  ]);
+  var SENSITIVE_CTX = /\b(card\s*number|cardnumber|credit\s*card|cvv|cvc|security\s*code|password|passcode|ssn|social\s*security|account\s*number|routing|iban|\bpin\b)\b/i;
+  var INSTRUMENT = /(?:•|\*|x){2,}\s*\d{2,}|\b(?:visa|mastercard|amex|american express|discover|maestro)\b/i;
+  function scrubUrl(url) {
+    if (!url) return url ?? null;
+    try {
+      const u = new URL(url);
+      return u.origin + u.pathname;
+    } catch {
+      return String(url).split(/[?#]/)[0];
+    }
+  }
+  function gate(event) {
+    if (!event) return null;
+    if (!DECISION_TYPES.has(event.type)) return event;
+    const d = event.data || {};
+    if (event.type !== "action" && !SAFE_CONTROLS.has(d.control)) return null;
+    if (SENSITIVE_CTX.test(`${d.group || ""} ${d.label || ""}`)) return null;
+    if (INSTRUMENT.test(d.label || "")) return null;
+    const label = redactString(d.label || "").value;
+    const group = redactString(d.group || "").value;
+    if (label && /^\s*\[[^\]]+\]\s*$/.test(label)) return null;
+    return {
+      ...event,
+      url: scrubUrl(event.url),
+      title: redactString(event.title || "").value,
+      data: { ...d, label, group }
+    };
+  }
+
   // extension/src/content.js
   var DEFAULT_DENYLIST = [
     "chase.com",
@@ -280,8 +459,17 @@
   var cfg = { paused: false, denylist: DEFAULT_DENYLIST, captureForms: true, captureSelections: true };
   var started = false;
   var pageStart = Date.now();
+  var pageStartPerf = 0;
   var maxScrollPct = 0;
   var currentPageId = null;
+  var IMPRESSION_CAP = 40;
+  var seenKeys = /* @__PURE__ */ new Set();
+  var recentInteractions = /* @__PURE__ */ new Map();
+  var impressionCount = 0;
+  var impressionObserver = null;
+  var funnelReached = false;
+  var submitted = false;
+  var FUNNEL_RE = /checkout|cart|payment|booking|\breview\b|\border\b|subscribe/i;
   var host = () => location.hostname.replace(/^www\./, "");
   var denylisted = () => cfg.denylist.some((d) => host() === d || host().endsWith("." + d));
   var uuid = () => crypto?.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.round(performance.now());
@@ -292,8 +480,10 @@
     return Math.min(1, Math.max(0, (h.scrollTop || window.scrollY || 0) / denom));
   }
   function send(event) {
+    const gated = gate(event);
+    if (!gated) return;
     try {
-      const r = api.runtime.sendMessage({ type: "nidra-event", event });
+      const r = api.runtime.sendMessage({ type: "nidra-event", event: gated });
       if (r && typeof r.catch === "function") r.catch(() => {
       });
     } catch {
@@ -314,7 +504,99 @@
   function newPage() {
     currentPageId = uuid();
     pageStart = Date.now();
+    pageStartPerf = performance.now();
     maxScrollPct = 0;
+    seenKeys = /* @__PURE__ */ new Set();
+    recentInteractions = /* @__PURE__ */ new Map();
+    impressionCount = 0;
+    funnelReached = false;
+    submitted = false;
+  }
+  var DECISION_CONTROLS = "a,button,select,input,[role=switch],[role=radio],[role=checkbox],[role=button],[role=tab],[role=menuitem],[role=option]";
+  function onInteraction(target) {
+    if (cfg.paused || denylisted()) return;
+    const el = target?.closest?.(DECISION_CONTROLS) || target;
+    const desc = describeInteraction(el);
+    if (!desc) return;
+    const now = performance.now();
+    const prev = recentInteractions.get(desc.elementKey);
+    if (prev && prev.action === desc.action && now - prev.t < 700) return;
+    recentInteractions.set(desc.elementKey, { action: desc.action, t: now });
+    const ev = makeEvent("interaction", {
+      ts: Date.now(),
+      url: location.href,
+      domain: host(),
+      title: document.title,
+      source: classify(location).source,
+      data: desc
+    });
+    ev.id = uuid();
+    ev.context_id = currentPageId;
+    ev.metrics = { latencyMs: Math.max(0, Math.round(performance.now() - pageStartPerf)) };
+    send(ev);
+  }
+  function onImpression(el) {
+    if (cfg.paused || denylisted() || impressionCount >= IMPRESSION_CAP) return;
+    const desc = describeImpression(el);
+    if (!desc) return;
+    if (seenKeys.has(desc.elementKey)) return;
+    seenKeys.add(desc.elementKey);
+    impressionCount += 1;
+    const ev = makeEvent("impression", {
+      ts: Date.now(),
+      url: location.href,
+      domain: host(),
+      title: document.title,
+      source: classify(location).source,
+      data: desc
+    });
+    ev.id = currentPageId + ":" + desc.elementKey;
+    ev.context_id = currentPageId;
+    send(ev);
+  }
+  function armImpressions() {
+    if (cfg.paused || denylisted() || typeof IntersectionObserver === "undefined") return;
+    if (!impressionObserver) {
+      impressionObserver = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (!e.isIntersecting) continue;
+            onImpression(e.target);
+            impressionObserver.unobserve(e.target);
+          }
+        },
+        { threshold: 0.5 }
+      );
+    }
+    let armed = 0;
+    for (const el of document.querySelectorAll(DECISION_CONTROLS)) {
+      if (armed >= IMPRESSION_CAP) break;
+      try {
+        impressionObserver.observe(el);
+        armed += 1;
+      } catch {
+      }
+    }
+  }
+  function emitAction(milestone, extra = {}) {
+    if (cfg.paused || denylisted()) return;
+    const ev = makeEvent("action", {
+      ts: Date.now(),
+      url: location.href,
+      domain: host(),
+      title: document.title,
+      source: classify(location).source,
+      data: { milestone, funnel: "checkout", ...extra }
+    });
+    ev.id = uuid();
+    ev.context_id = currentPageId;
+    send(ev);
+  }
+  function maybeFunnel() {
+    if (!funnelReached && FUNNEL_RE.test(location.pathname + " " + location.href)) {
+      funnelReached = true;
+      emitAction("reached_checkout");
+    }
   }
   addEventListener("scroll", () => {
     maxScrollPct = Math.max(maxScrollPct, scrollPct());
@@ -322,7 +604,12 @@
   addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") emitPrimary("flush");
   });
-  addEventListener("pagehide", () => emitPrimary("flush"));
+  addEventListener("pagehide", () => {
+    emitPrimary("flush");
+    if (funnelReached && !submitted) emitAction("abandoned");
+  });
+  addEventListener("click", (e) => onInteraction(e.target), true);
+  addEventListener("change", (e) => onInteraction(e.target), true);
   addEventListener(
     "submit",
     (e) => {
@@ -346,6 +633,8 @@
           send(ev);
         }
       }
+      submitted = true;
+      emitAction("submitted");
     },
     true
   );
@@ -375,7 +664,11 @@
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     newPage();
-    setTimeout(() => emitPrimary("spa"), 800);
+    setTimeout(() => {
+      emitPrimary("spa");
+      maybeFunnel();
+      armImpressions();
+    }, 800);
   }
   function watchSpa() {
     addEventListener("hashchange", onRoute);
@@ -404,7 +697,11 @@
     }
     if (denylisted()) return;
     newPage();
-    setTimeout(() => emitPrimary("load"), 600);
+    setTimeout(() => {
+      emitPrimary("load");
+      maybeFunnel();
+      armImpressions();
+    }, 600);
     watchSpa();
   }
   init();
