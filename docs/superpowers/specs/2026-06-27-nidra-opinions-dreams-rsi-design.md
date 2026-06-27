@@ -186,17 +186,31 @@ class Dream(Base):
     confidence: Mapped[float] = mapped_column(default=0.0)
     provenance: Mapped[list | None] = mapped_column(JSONB)     # opinions + signals it drew on
     status: Mapped[str] = mapped_column(String(16), default="proposed")
-    #   proposed → surfaced → acted → (confirmed | refuted) ; or → expired
-    outcome: Mapped[dict | None] = mapped_column(JSONB)        # the real feedback that resolved it
+    #   proposed → surfaced → (confirmed | refuted | expired)
+    outcome: Mapped[dict | None] = mapped_column(JSONB)        # { surface, signal, evidence, at }
     created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())
     expires_at: Mapped[dt.datetime | None]                     # TTL — unacted dreams die
     resolved_at: Mapped[dt.datetime | None]
 ```
 
-- Acting on a dream **emits a real activity event** ("suggested X → accepted/dismissed").
-  That event ingests like any other signal and is what may ground a new Opinion.
+**Outcome vocabulary (what resolves a dream → the RSI label):**
+
+| `outcome.signal` | surface | resolves to | RSI weight |
+|---|---|---|---|
+| `acted` (tapped / accepted / replied) | digest | confirmed | strong + |
+| `corroborated` (later activity matched the prediction) | any | confirmed | strong + (hardest to game) |
+| `dismissed` | digest / popup | refuted | strong − |
+| `snoozed` | digest | (re-surface later) | neutral |
+| `ignored` (surfaced, no response) | digest / popup | → expires via TTL | **weak** (not a negative) |
+
+- A dream surfaced in the digest with an **act/dismiss/snooze** affordance is the
+  primary label source. Acting **emits a real activity event** ("suggested X →
+  accepted"), which ingests like any signal and is what may ground a new Opinion.
+- The **popup Dreams tab is read-only** (a window onto current dreams); a dismiss
+  there is a valid `dismissed`, but it is not the primary capture path.
 - Resolved dreams (`confirmed`/`refuted`) are the RSI track record (Phase 1
-  exemplars; Phase 2 training data).
+  exemplars; Phase 2 training data). `corroborated` is the only label backtesting
+  can produce (§3a).
 
 ## 5. Where it runs
 
@@ -214,8 +228,10 @@ class Dream(Base):
 2. **Opinion-former mechanism:** cheap deterministic/rules vs a small LLM
    extraction pass per signal (both are "grounded"; the distinction is cost/quality).
 3. **Dream cadence:** fixed nightly vs importance-threshold trigger (or both).
-4. **Action surface:** where dreams are surfaced to the user (digest, assistant
-   turn, proactive nudge) — determines how outcomes are captured.
+4. ~~**Action surface**~~ — **RESOLVED:** **Digest = primary** (reuses
+   `DigestService`; act/dismiss/snooze affordances → outcome labels; cadence matches
+   nightly dreaming) **+ extension popup Dreams tab = read-only window**. Assistant
+   conversation + proactive nudge are deferred (add once hit-rate is proven).
 
 ## 7. Decisions log
 
@@ -235,3 +251,5 @@ class Dream(Base):
 - **Backtesting on history** is the cold start + offline benchmark — point-in-time
   (no leakage), corroboration-only, measures predictiveness not lift; live loop
   still required for intervention effect.
+- **Action surface = digest (primary, outcome capture) + popup Dreams tab
+  (read-only).** Assistant/nudge deferred until hit-rate is proven.
