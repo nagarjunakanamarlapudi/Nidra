@@ -1,0 +1,13 @@
+# Gitleaks configuration for Pragya.
+# We allow the generic-api-key rule to fire on test files where
+# values are obviously dummy single-characters (e.g. anthropic_api_key="k").
+
+[allowlist]
+  description = "Test-file dummy credentials"
+  paths = [
+    '''backend/tests/.*'''
+  ]
+  # Also suppress by commit fingerprint for history hits
+  commits = [
+    "d7c6769551e5a8d24314c1a4284e34b0c396e655"
+  ]

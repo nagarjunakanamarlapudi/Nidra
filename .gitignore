@@ -1,0 +1,53 @@
+# ---- Secrets / env ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.python-version
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.npm/
+
+# ---- Docker / data ----
+**/pgdata/
+*.local
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Database backups (make backup)
+backups/
+
+# ---- Agent scratch (subagent reports, review packages, progress ledgers) ----
+# Design docs live in docs/superpowers/ and ARE tracked; this is throwaway scratch.
+.superpowers/
+
+# ---- Local verification artifacts (UI screenshots, playwright output) ----
+/connectors-*.png
+.playwright-mcp/

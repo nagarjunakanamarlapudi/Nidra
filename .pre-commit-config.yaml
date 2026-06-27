@@ -1,0 +1,37 @@
+repos:
+  # ── Secret detection ────────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.27.2
+    hooks:
+      - id: gitleaks
+        args: ["--config=.gitleaks.toml"]
+
+  # ── General hygiene ─────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+        exclude: ^(frontend/\.next/|frontend/node_modules/|tools/mermaid-check/node_modules/)
+      - id: trailing-whitespace
+        exclude: ^(frontend/\.next/|frontend/node_modules/|tools/mermaid-check/node_modules/)
+      - id: check-yaml
+        exclude: ^(frontend/node_modules/|tools/mermaid-check/node_modules/)
+      - id: check-toml
+      - id: check-json
+        exclude: ^(frontend/node_modules/|tools/mermaid-check/node_modules/)
+      - id: mixed-line-ending
+        exclude: ^(frontend/\.next/|frontend/node_modules/|tools/mermaid-check/node_modules/)
+
+  # ── Python linting & formatting (backend only) ──────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
