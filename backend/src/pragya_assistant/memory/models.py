@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm import relationship as orm_relationship
@@ -318,6 +318,9 @@ class BrowserActivityEvent(Base):
     __tablename__ = "browser_activity_events"
     __table_args__ = (
         UniqueConstraint("connector_key", "client_id", name="uq_browser_activity_client"),
+        # Correlates impression -> interaction -> action within one page load.
+        # btree (not JSONB GIN) because the lookup is equality on (connector_key, context_id).
+        Index("ix_browser_activity_context", "connector_key", "context_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -330,5 +333,59 @@ class BrowserActivityEvent(Base):
     url: Mapped[str | None] = mapped_column(Text, default=None)
     title: Mapped[str | None] = mapped_column(Text, default=None)
     data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # Engagement signal measured client-side: dwellMs (real time-on-page),
+    # scrollPct / readPct (how far the page was scrolled / read). Lets the dreamer
+    # tell "actually read" from "bounced" rather than just "visited".
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # Page-load correlation id (the extension's currentPageId). Ties the
+    # impression/interaction/action events of one decision together.
+    context_id: Mapped[str | None] = mapped_column(String(36), default=None)
     redacted: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())
+
+
+class UserModelSnapshot(Base):
+    """A point-in-time derived trait/preference about the user.
+
+    The distilled, durable half of the holistic user model: where
+    ``BrowserActivityEvent`` is the raw substrate, this is what the
+    derivation/dreamer pass *concluded* (e.g. "decisiveness", "prefers Apple
+    Pay"). Append-only — each pass writes fresh rows so a trait can be tracked
+    as it evolves; the "current model" is the latest row per ``trait``.
+    """
+
+    __tablename__ = "user_model_snapshots"
+    __table_args__ = (Index("ix_user_model_trait_time", "trait", "computed_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trait: Mapped[str] = mapped_column(String(100), index=True)
+    value: Mapped[Any] = mapped_column(JSONB)  # scalar | label | struct
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    evidence: Mapped[int] = mapped_column(default=0)
+    provenance: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
+    computed_at: Mapped[dt.datetime] = mapped_column(server_default=func.now(), index=True)
+
+
+class Dream(Base):
+    """A speculative hypothesis/foresight the dreamer produced ON TOP of Opinions.
+
+    NOT a belief: dreams live here, never in ``user_model_snapshots``. A dream is
+    surfaced (e.g. as a digest item), then resolved by a REAL outcome — acted /
+    corroborated (→ confirmed) or dismissed (→ refuted); unacted dreams expire via
+    TTL. Resolved dreams are the recursive-self-improvement track record.
+    """
+
+    __tablename__ = "dreams"
+    __table_args__ = (Index("ix_dreams_status", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    hypothesis: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(32))  # foresight | suggestion | need
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    provenance: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
+    # proposed → surfaced → (confirmed | refuted | expired)
+    status: Mapped[str] = mapped_column(String(16), default="proposed")
+    outcome: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())
+    expires_at: Mapped[dt.datetime | None] = mapped_column(default=None)
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(default=None)

@@ -28,7 +28,13 @@ SYSTEM = (
     "activity. Your job is to CONNECT THE DOTS ACROSS signals into higher-level understanding "
     "— NOT to repeat the activity back. Look hard for latent intent that spans MULTIPLE signals "
     "(e.g. a flight search + a car-rental search + reading about hotels = planning a trip; "
-    "repeated reading on one topic + a related search = an active project). Infer interests, "
+    "repeated reading on one topic + a related search = an active project). A reading line may "
+    'end with an engagement marker like "— 6m, 95% read" (time on page, scroll depth): weight '
+    "pages the user truly engaged with far more heavily than ones they bounced off in seconds. "
+    "A DECISIONS section lists what the user was shown, what they picked, and how far they got "
+    "in a flow; infer DECISION STYLE from it (decisive vs deliberating, comparison-shopping, "
+    "price-sensitive vs premium-tolerant, what they abandoned). "
+    "Infer interests, "
     "reading taste, active projects, and the user's likely next needs. Be specific and confident "
     "when several signals corroborate; hedge when the evidence is thin. Never invent activity that "
     "isn't in the digest. Respond with ONLY a JSON object of this exact shape: "
@@ -37,6 +43,25 @@ SYSTEM = (
     'who this person is right now", "beliefs": [{"statement": "a durable belief", "confidence": '
     '0.0}], "nextNeeds": ["a proactive thing Nidra could do next"]}'
 )
+
+
+def _engagement(event: BrowserActivityEvent) -> str:
+    """Human-readable dwell + read-depth suffix, e.g. " — 6m, 95% read".
+
+    This is the engagement signal: it lets the dreamer tell a page the user
+    actually read (long dwell, deep scroll) from one they bounced off in seconds.
+    Empty when no metrics were captured (older events, denylisted pages).
+    """
+    m = event.metrics or {}
+    parts: list[str] = []
+    dwell_ms = m.get("dwellMs")
+    if isinstance(dwell_ms, int | float) and dwell_ms > 0:
+        dwell = f"{round(dwell_ms / 60000)}m" if dwell_ms >= 60000 else f"{round(dwell_ms / 1000)}s"
+        parts.append(dwell)
+    pct = m.get("readPct", m.get("scrollPct"))
+    if isinstance(pct, int | float):
+        parts.append(f"{round(pct * 100)}% read")
+    return f" — {', '.join(parts)}" if parts else ""
 
 
 def build_digest(events: list[BrowserActivityEvent]) -> str:
@@ -60,7 +85,7 @@ def build_digest(events: list[BrowserActivityEvent]) -> str:
         title = d.get("title") or e.title or e.domain or "(page)"
         author = f" by {d['author']}" if d.get("author") else ""
         suffix = f" ({tags})" if tags else ""
-        reading.append(f'- "{title}"{author}{suffix} [{e.source}]')
+        reading.append(f'- "{title}"{author}{suffix} [{e.source}]{_engagement(e)}')
     if reading:
         lines.append("READING:\n" + "\n".join(reading))
 
@@ -77,6 +102,32 @@ def build_digest(events: list[BrowserActivityEvent]) -> str:
     ]
     if calendar:
         lines.append("CALENDAR:\n" + "\n".join(calendar))
+
+    # Decisions: what the user was shown, picked, and how far they got. This is
+    # the substrate for decision-style inference (decisiveness, comparison,
+    # abandonment, premium-tolerance).
+    decisions: list[str] = []
+    for e in of("impression"):
+        d = e.data or {}
+        opts = ", ".join(str(o.get("label")) for o in (d.get("choiceSet") or []) if o.get("label"))
+        if opts:
+            decisions.append(f"- shown {d.get('group') or 'options'}: {opts}")
+    for e in of("interaction"):
+        d = e.data or {}
+        grp = f" in {d['group']}" if d.get("group") else ""
+        val = f" = {d['value']}" if d.get("value") is not None else ""
+        act = d.get("action") or "interacted"
+        label = d.get("label") or "(control)"
+        decisions.append(f'- {act} "{label}"{grp}{val}')
+    for e in of("action"):
+        d = e.data or {}
+        funnel = ""
+        if d.get("funnel"):
+            span = f" {d['step']}/{d['of']}" if d.get("step") and d.get("of") else ""
+            funnel = f" ({d['funnel']}{span})"
+        decisions.append(f"- {d.get('milestone') or 'action'}{funnel}")
+    if decisions:
+        lines.append("DECISIONS:\n" + "\n".join(decisions))
 
     domains: dict[str, int] = {}
     for e in events:

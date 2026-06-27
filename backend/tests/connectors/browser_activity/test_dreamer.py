@@ -50,6 +50,62 @@ def test_build_digest_groups_by_type() -> None:
     assert "READING:" in digest and "ryokans" in digest
 
 
+def test_build_digest_surfaces_engagement() -> None:
+    """A deep read and a bounce must look different so the dreamer can weigh them."""
+    events = [
+        BrowserActivityEvent(
+            connector_key=KEY,
+            client_id="deep",
+            event_type="reading",
+            ts=dt.datetime(2026, 6, 28, 9),
+            source="medium",
+            data={"title": "Engaged article"},
+            metrics={"dwellMs": 360000, "readPct": 0.95},
+        ),
+        BrowserActivityEvent(
+            connector_key=KEY,
+            client_id="bounce",
+            event_type="reading",
+            ts=dt.datetime(2026, 6, 28, 10),
+            source="web",
+            data={"title": "Bounced article"},
+            metrics={"dwellMs": 4000, "readPct": 0.0},
+        ),
+    ]
+    digest = build_digest(events)
+    deep_line = next(line for line in digest.splitlines() if "Engaged article" in line)
+    bounce_line = next(line for line in digest.splitlines() if "Bounced article" in line)
+    assert "6m" in deep_line and "95%" in deep_line
+    assert "4s" in bounce_line
+
+
+def test_build_digest_summarizes_decisions() -> None:
+    """interaction + action events surface as a DECISIONS section the LLM can read."""
+    events = [
+        BrowserActivityEvent(
+            connector_key=KEY,
+            client_id="i1",
+            event_type="interaction",
+            ts=dt.datetime(2026, 6, 28, 9),
+            domain="example.com",
+            data={"action": "choose", "control": "radio", "label": "Annual",
+                  "group": "Subscription", "value": "annual"},
+        ),
+        BrowserActivityEvent(
+            connector_key=KEY,
+            client_id="a1",
+            event_type="action",
+            ts=dt.datetime(2026, 6, 28, 9, 1),
+            domain="example.com",
+            data={"milestone": "abandoned", "funnel": "checkout", "step": 3, "of": 4},
+        ),
+    ]
+    digest = build_digest(events)
+    assert "DECISIONS:" in digest
+    assert "Subscription" in digest and "annual" in digest
+    assert "abandoned" in digest
+
+
 async def test_dreamer_connects_signals_with_injected_engine(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

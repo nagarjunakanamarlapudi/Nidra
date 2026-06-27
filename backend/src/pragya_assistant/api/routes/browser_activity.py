@@ -42,6 +42,8 @@ class ActivityEventIn(BaseModel):
     title: str | None = None
     source: str | None = None
     data: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None  # engagement: dwellMs, scrollPct, readPct, latencyMs
+    context_id: str | None = None  # correlates impression -> interaction -> action
     redacted: bool = False
 
 
@@ -78,6 +80,8 @@ def _to_ingested(event: ActivityEventIn, index: int) -> IngestedEvent:
         url=event.url,
         title=event.title,
         data=event.data,
+        metrics=event.metrics,
+        context_id=event.context_id,
         redacted=event.redacted,
     )
 

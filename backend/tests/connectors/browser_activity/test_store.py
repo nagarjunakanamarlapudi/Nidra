@@ -35,6 +35,76 @@ async def test_add_events_and_read_back(
     assert recent[0].data == {"query": "raft consensus"}
 
 
+async def test_add_events_persists_engagement_metrics(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Dwell time + scroll depth (the engagement signal) round-trip into storage."""
+    store = BrowserActivityEventStore(session_factory)
+    await store.add_events(
+        KEY,
+        [
+            IngestedEvent(
+                client_id="m",
+                event_type="reading",
+                ts=dt.datetime(2026, 6, 28, 9),
+                title="A long read",
+                metrics={"dwellMs": 360000, "scrollPct": 0.95, "readPct": 0.95},
+            )
+        ],
+    )
+    recent = await store.recent(KEY)
+    assert recent[0].metrics == {"dwellMs": 360000, "scrollPct": 0.95, "readPct": 0.95}
+
+
+async def test_add_events_persists_context_id(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """context_id correlates impression -> interaction -> action on one page load."""
+    store = BrowserActivityEventStore(session_factory)
+    await store.add_events(
+        KEY,
+        [
+            IngestedEvent(
+                client_id="i1",
+                event_type="interaction",
+                ts=dt.datetime(2026, 6, 28, 9),
+                context_id="ctx-abc",
+                data={"action": "toggle_on", "control": "toggle", "label": "X"},
+            )
+        ],
+    )
+    assert (await store.recent(KEY))[0].context_id == "ctx-abc"
+
+
+async def test_recent_filters_by_type_so_new_events_dont_evict_reading(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The dreamer's reading/search window must survive a flood of interactions."""
+    store = BrowserActivityEventStore(session_factory)
+    await store.add_events(
+        KEY,
+        [
+            IngestedEvent(
+                client_id="read-1",
+                event_type="reading",
+                ts=dt.datetime(2026, 6, 28, 8),
+                title="An article",
+            ),
+            *[
+                IngestedEvent(
+                    client_id=f"int-{n}",
+                    event_type="interaction",
+                    ts=dt.datetime(2026, 6, 28, 9, n % 60),
+                    data={"action": "select"},
+                )
+                for n in range(50)
+            ],
+        ],
+    )
+    reading = await store.recent(KEY, types=["reading"], limit=10)
+    assert len(reading) == 1 and reading[0].title == "An article"
+
+
 async def test_add_events_upserts_by_client_id(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

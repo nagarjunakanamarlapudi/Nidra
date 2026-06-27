@@ -24,6 +24,8 @@ class IngestedEvent:
     url: str | None = None
     title: str | None = None
     data: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None
+    context_id: str | None = None
     redacted: bool = False
 
 
@@ -56,20 +58,32 @@ class BrowserActivityEventStore:
                 row.url = e.url
                 row.title = e.title
                 row.data = e.data
+                row.metrics = e.metrics
+                row.context_id = e.context_id
                 row.redacted = e.redacted
                 if existing is None:
                     s.add(row)
             await s.commit()
         return len(events)
 
-    async def recent(self, connector_key: str, *, limit: int = 200) -> list[BrowserActivityEvent]:
+    async def recent(
+        self,
+        connector_key: str,
+        *,
+        limit: int = 200,
+        types: list[str] | None = None,
+    ) -> list[BrowserActivityEvent]:
+        """Most-recent events, newest first. ``types`` restricts to those
+        ``event_type``s — used to give each event family its OWN window, so a
+        flood of high-frequency interaction/impression rows can't evict the
+        reading/search/email/calendar rows the dreamer's digest depends on."""
         async with self._sf() as s:
-            stmt = (
-                select(BrowserActivityEvent)
-                .where(BrowserActivityEvent.connector_key == connector_key)
-                .order_by(BrowserActivityEvent.ts.desc())
-                .limit(limit)
+            stmt = select(BrowserActivityEvent).where(
+                BrowserActivityEvent.connector_key == connector_key
             )
+            if types is not None:
+                stmt = stmt.where(BrowserActivityEvent.event_type.in_(types))
+            stmt = stmt.order_by(BrowserActivityEvent.ts.desc()).limit(limit)
             return list((await s.execute(stmt)).scalars().all())
 
     async def count(self, connector_key: str) -> int:
