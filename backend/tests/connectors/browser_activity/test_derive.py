@@ -11,7 +11,7 @@ from pragya_assistant.connectors.browser_activity.store import (
     BrowserActivityEventStore,
     IngestedEvent,
 )
-from pragya_assistant.connectors.browser_activity.user_model import UserModelStore
+from pragya_assistant.user_model.store import UserModelStore
 
 KEY = "browser_activity"
 

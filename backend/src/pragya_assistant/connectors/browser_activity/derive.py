@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
-from pragya_assistant.connectors.browser_activity.user_model import TraitSnapshot, UserModelStore
+from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
 
 _PAYMENT_GROUP = re.compile(r"payment", re.I)
 

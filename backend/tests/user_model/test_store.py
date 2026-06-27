@@ -7,7 +7,7 @@ import datetime as dt
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from pragya_assistant.connectors.browser_activity.user_model import (
+from pragya_assistant.user_model.store import (
     TraitSnapshot,
     UserModelStore,
 )
