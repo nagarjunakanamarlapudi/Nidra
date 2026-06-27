@@ -1,0 +1,180 @@
+(() => {
+  // extension/src/browser-api.js
+  var api = typeof globalThis.browser !== "undefined" && globalThis.browser?.runtime ? globalThis.browser : globalThis.chrome;
+
+  // extension/src/popup.js
+  var $ = (s) => document.querySelector(s);
+  var ICON = { reading: "\u{1F4D6}", search: "\u{1F50E}", email: "\u2709\uFE0F", calendar: "\u{1F4C5}", form_input: "\u2328\uFE0F", selection: "\u2733\uFE0F", pageview: "\u{1F310}" };
+  function timeAgo(ts) {
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1e3));
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.round(s / 60) + "m ago";
+    if (s < 86400) return Math.round(s / 3600) + "h ago";
+    return Math.round(s / 86400) + "d ago";
+  }
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function renderOpinions(o) {
+    const box = $("#opinions");
+    box.innerHTML = "";
+    if (!o.generatedFrom) {
+      box.append(el("p", "empty", "No signals yet. Browse, search, or read an article \u2014 then reopen."));
+      return;
+    }
+    const bh = el("h3", null, "Opinions formed");
+    box.append(bh);
+    if (!o.beliefs.length) box.append(el("p", "empty", "Gathering evidence\u2026"));
+    for (const b of o.beliefs) {
+      const card = el("div", "belief");
+      card.append(el("div", "belief-text", b.statement));
+      const meta = el("div", "belief-meta");
+      const bar = el("div", "bar");
+      const fill = el("div", "bar-fill");
+      fill.style.width = Math.round(b.confidence * 100) + "%";
+      bar.append(fill);
+      meta.append(bar, el("span", "ev", `${Math.round(b.confidence * 100)}% \xB7 ${b.evidence} signals \xB7 ${b.provenance.join(", ")}`));
+      card.append(meta);
+      box.append(card);
+    }
+    if (o.interests.length) {
+      box.append(el("h3", null, "Interests"));
+      const chips = el("div", "chips");
+      for (const i of o.interests) chips.append(el("span", "chip", `${i.topic} \xB7 ${i.evidence}`));
+      box.append(chips);
+    }
+    const t = o.readingTaste;
+    if (t.articlesRead) {
+      box.append(el("h3", null, "Reading taste"));
+      const ul = el("ul", "taste");
+      ul.append(el("li", null, `${t.articlesRead} articles \xB7 avg ${t.avgWords} words`));
+      ul.append(el("li", null, `Long-form ratio: ${Math.round(t.longFormRatio * 100)}%`));
+      if (t.prefersPrimarySources) ul.append(el("li", null, "Prefers primary sources over listicles"));
+      if (t.topAuthors[0]?.author) ul.append(el("li", null, `Top author: ${t.topAuthors[0].author}`));
+      box.append(ul);
+    }
+  }
+  function renderSignals(events) {
+    const list = $("#signals");
+    list.innerHTML = "";
+    const recent = [...events].sort((a, b) => b.ts - a.ts).slice(0, 60);
+    if (!recent.length) {
+      list.append(el("p", "empty", "Nothing captured yet."));
+      return;
+    }
+    for (const e of recent) {
+      const row = el("div", "row");
+      row.append(el("span", "ico", ICON[e.type] || "\u2022"));
+      const mid = el("div", "mid");
+      const label = e.type === "search" ? `\u201C${e.data?.query ?? ""}\u201D` : e.type === "reading" ? e.data?.title || e.title || e.domain : e.type === "email" ? `${e.data?.action || "mail"}: ${e.data?.subject || ""}` : e.type === "calendar" ? `${e.data?.action || "cal"}: ${e.data?.eventTitle || ""}` : e.type === "form_input" ? `${e.data?.kind}: ${e.data?.value ?? "(hidden)"}` : e.type === "selection" ? `\u201C${e.data?.text || ""}\u201D` : e.title || e.domain || e.url;
+      mid.append(el("div", "label", label || "(page)"));
+      mid.append(el("div", "sub", `${e.source}${e.backfill ? " \xB7 history" : ""} \xB7 ${timeAgo(e.ts)}`));
+      row.append(mid);
+      if (e.redacted) row.append(el("span", "lock", "\u{1F512}"));
+      list.append(row);
+    }
+  }
+  async function refresh() {
+    const { events, opinions } = await api.runtime.sendMessage({ type: "nidra-getState" });
+    $("#count").textContent = opinions.counts.total;
+    $("#breakdown").textContent = `${opinions.counts.reading}\u{1F4D6} ${opinions.counts.search}\u{1F50E} ${opinions.counts.email}\u2709\uFE0F ${opinions.counts.calendar}\u{1F4C5}`;
+    renderOpinions(opinions);
+    renderSignals(events);
+  }
+  function setPause(paused) {
+    const b = $("#pause");
+    b.textContent = paused ? "\u25B6 Resume" : "\u23F8 Pause";
+    b.classList.toggle("paused", paused);
+    $("#status").textContent = paused ? "paused" : "observing";
+    $("#status").classList.toggle("off", paused);
+  }
+  function showTab(which) {
+    for (const t of ["dreams", "opinions", "signals"]) {
+      $("#tab-" + t).classList.toggle("active", which === t);
+      $("#" + t).classList.toggle("hidden", which !== t);
+    }
+  }
+  async function runDream() {
+    const out = $("#dream-out");
+    out.innerHTML = '<p class="empty">\u{1F4A4} Dreaming on your activity \u2014 on-device Gemma, ~10\u201320s\u2026</p>';
+    let cfg = {};
+    try {
+      cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" });
+    } catch {
+    }
+    const opts = { method: "POST", headers: {} };
+    let url;
+    if (cfg.backendUrl) {
+      url = cfg.backendUrl.replace(/\/$/, "") + "/connectors/browser_activity/dream";
+      if (cfg.appToken) opts.headers.authorization = "Bearer " + cfg.appToken;
+    } else {
+      url = (cfg.collectorUrl || "http://localhost:8799") + "/dream";
+    }
+    try {
+      renderDream(await (await fetch(url, opts)).json());
+    } catch {
+      out.innerHTML = `<p class="empty">Couldn't reach the dreamer. Run the Pragya backend (or <code>npm run collector</code>) and make sure Ollama is running.</p>`;
+    }
+  }
+  function renderDream(d) {
+    const out = $("#dream-out");
+    out.innerHTML = "";
+    const insights = d?.connectedInsights || d?.connected_insights || [];
+    const nextNeeds = d?.nextNeeds || d?.next_needs || [];
+    if (!d || !insights.length && !d.persona) {
+      out.append(el("p", "empty", "No dream yet \u2014 capture some activity first, then dream."));
+      return;
+    }
+    if (d.persona) {
+      const p = el("div", "persona");
+      p.append(el("div", "persona-label", "Who you are right now"), el("div", "persona-text", d.persona));
+      out.append(p);
+    }
+    if (insights.length) {
+      out.append(el("h3", null, "Connected the dots"));
+      for (const i of insights) {
+        const c = el("div", "belief");
+        c.append(el("div", "belief-text", "\u{1F517} " + i.insight));
+        const meta = el("div", "belief-meta");
+        const bar = el("div", "bar");
+        const fill = el("div", "bar-fill");
+        fill.style.width = Math.round((i.confidence || 0) * 100) + "%";
+        bar.append(fill);
+        meta.append(bar, el("span", "ev", (i.fromSignals || []).join(" + ")));
+        c.append(meta);
+        if (i.reasoning) c.append(el("div", "sub", i.reasoning));
+        out.append(c);
+      }
+    }
+    if (nextNeeds.length) {
+      out.append(el("h3", null, "What Nidra could do next"));
+      const ul = el("ul", "taste");
+      for (const n of nextNeeds) ul.append(el("li", null, n));
+      out.append(ul);
+    }
+    if (d.engine) out.append(el("p", "note", "dreamed by " + d.engine));
+  }
+  document.addEventListener("DOMContentLoaded", async () => {
+    const cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" });
+    setPause(cfg.paused);
+    $("#pause").addEventListener("click", async () => {
+      const c = await api.runtime.sendMessage({ type: "nidra-setConfig", patch: { paused: !cfg.paused } });
+      cfg.paused = c.paused;
+      setPause(c.paused);
+    });
+    $("#clear").addEventListener("click", async () => {
+      await api.runtime.sendMessage({ type: "nidra-clear" });
+      refresh();
+    });
+    $("#refresh").addEventListener("click", refresh);
+    $("#dream").addEventListener("click", runDream);
+    $("#tab-dreams").addEventListener("click", () => showTab("dreams"));
+    $("#tab-opinions").addEventListener("click", () => showTab("opinions"));
+    $("#tab-signals").addEventListener("click", () => showTab("signals"));
+    showTab("dreams");
+    refresh();
+  });
+})();

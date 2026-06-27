@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Understanding Raft Consensus | by Jane Doe | Medium</title>
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Understanding Raft Consensus" />
+    <meta property="og:site_name" content="Medium" />
+    <meta name="author" content="Jane Doe" />
+    <meta name="keywords" content="distributed systems, consensus, raft, paxos, replication" />
+  </head>
+  <body>
+    <header><nav>Medium nav (ignored)</nav></header>
+    <article>
+      <h1>Understanding Raft Consensus</h1>
+      <p>Consensus is one of the most fundamental and yet most misunderstood problems in distributed systems. When a cluster of machines must agree on a single value despite failures, dropped messages, and network partitions, the algorithm that coordinates them becomes the beating heart of the system. Raft was designed to be understandable, breaking the problem into leader election, log replication, and safety.</p>
+      <p>Each of these subproblems can be reasoned about independently, which makes the whole protocol far easier to implement correctly than its predecessors. Leader election ensures that at any moment a single server coordinates the cluster, while log replication guarantees that committed entries appear in the same order on every machine. Safety ties the two together so that a committed entry is never lost.</p>
+      <p>In practice, the elegance of Raft is that it trades a small amount of theoretical generality for an enormous gain in clarity. Engineers can read the paper once and walk away with a working mental model. That clarity is why Raft now underpins systems like etcd, Consul, and TiKV, where correctness under failure is non-negotiable.</p>
+      <p>Leader election begins when a follower stops hearing heartbeats. It increments its term, votes for itself, and asks the rest of the cluster for votes. A candidate that collects a majority becomes the leader and immediately starts sending heartbeats to suppress further elections. Randomized timeouts make split votes rare and recovery fast.</p>
+      <p>Log replication is where the real work happens. The leader appends a client command to its log and sends it to followers. Once a majority have stored the entry, the leader marks it committed and applies it to the state machine. Because entries are committed in order, every replica converges on exactly the same sequence of operations.</p>
+      <p>Safety is the subtle part. Raft restricts which servers may become leader so that a new leader always holds every committed entry. This single rule, combined with the commitment condition, is enough to guarantee that the replicated log never diverges. It is a beautiful example of how a carefully chosen invariant can replace pages of case analysis.</p>
+      <p>Implementing Raft in production surfaces a host of practical concerns that the paper deliberately leaves abstract. Snapshotting keeps the log from growing without bound, while pipelining and batching of append entries requests keep throughput high under load. Careful handling of client sessions ensures that retried commands are not applied twice, preserving the linearizable semantics that applications depend on for correctness.</p>
+      <p>Testing a consensus implementation is its own discipline. Deterministic simulation, fault injection, and randomized partition testing expose the rare interleavings that only appear once every few million operations. Teams that invest in this kind of testing infrastructure tend to ship far more reliable systems, because the failures that matter most are precisely the ones that are hardest to reproduce by hand.</p>
+      <p>Adoption tells the rest of the story. From etcd powering Kubernetes to Consul coordinating service meshes, Raft has quietly become the default answer whenever a team needs a replicated, strongly consistent log. Its lasting contribution is not just the protocol itself but the demonstration that understandability is a legitimate and achievable design goal for distributed algorithms.</p>
+    </article>
+    <footer>Footer (ignored)</footer>
+  </body>
+</html>

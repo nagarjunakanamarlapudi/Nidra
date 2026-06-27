@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>In Search of an Understandable Consensus Algorithm (Extended Version)</title>
+    <meta name="author" content="Diego Ongaro, John Ousterhout" />
+    <meta name="keywords" content="consensus, raft, distributed systems, replicated log" />
+  </head>
+  <body>
+    <article>
+      <h1>In Search of an Understandable Consensus Algorithm</h1>
+      <p>Raft is a consensus algorithm for managing a replicated log. It produces a result equivalent to multi-Paxos, and it is as efficient as Paxos, but its structure is different from Paxos; this makes Raft more understandable than Paxos and also provides a better foundation for building practical systems.</p>
+      <p>In order to enhance understandability, Raft separates the key elements of consensus, such as leader election, log replication, and safety, and it enforces a stronger degree of coherency to reduce the number of states that must be considered. Results from a user study demonstrate that Raft is easier for students to learn than Paxos.</p>
+      <p>Raft also includes a new mechanism for changing the cluster membership, which uses overlapping majorities to guarantee safety. Consensus algorithms allow a collection of machines to work as a coherent group that can survive the failures of some of its members. Because of this, they play a key role in building reliable large-scale software systems.</p>
+      <p>Paxos has dominated the discussion of consensus algorithms over the last decade: most implementations of consensus are based on Paxos or influenced by it, and Paxos has become the primary vehicle used to teach students about consensus. Unfortunately, Paxos is quite difficult to understand, in spite of numerous attempts to make it more approachable.</p>
+      <p>We hypothesized that understandability could be improved by designing for it from the start. Our most important goal, and most difficult challenge, was understandability. We defined it in terms of how quickly a reader could grasp the algorithm and build an accurate intuition for its behavior under partial failure.</p>
+      <p>The result of this work is Raft. In designing Raft we applied specific techniques to improve understandability, including decomposition and state space reduction. We believe Raft is superior to Paxos and other consensus algorithms, both for educational purposes and as a foundation for implementation.</p>
+      <p>We evaluated Raft along three dimensions: understandability, correctness, and performance. To measure understandability we conducted a study with graduate students who learned both Raft and Paxos; the participants scored substantially higher on Raft and reported greater confidence in their answers. This experimental evidence supports our central claim that the design choices in Raft genuinely lower the cognitive burden of reasoning about consensus.</p>
+      <p>For correctness we developed a formal specification and proof of the core consensus mechanism. The specification makes the safety property precise, and the proof shows that the leader completeness and state machine safety properties hold under all interleavings of failures and message delays. The membership change protocol, which uses joint consensus through overlapping majorities, is treated as a first-class part of the algorithm rather than an afterthought.</p>
+      <p>Finally, our performance evaluation shows that Raft's leader election converges quickly even when timeouts are chosen conservatively, and that throughput is comparable to optimized Paxos implementations. Taken together, these results argue that an algorithm designed for understandability need not sacrifice either rigor or speed, and can serve as a solid foundation for real systems.</p>
+    </article>
+  </body>
+</html>

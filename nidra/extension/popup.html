@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Nidra</title>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="moon">🌙</span>
+        <div>
+          <div class="title">Nidra</div>
+          <div class="tag">is <span id="status">observing</span> · <span id="count">0</span> signals</div>
+        </div>
+      </div>
+      <button id="pause" class="btn">⏸ Pause</button>
+    </header>
+
+    <div class="breakdown" id="breakdown"></div>
+
+    <nav class="tabs">
+      <button id="tab-dreams" class="tab active">Dreams</button>
+      <button id="tab-opinions" class="tab">Opinions</button>
+      <button id="tab-signals" class="tab">Signals</button>
+    </nav>
+
+    <main>
+      <section id="dreams">
+        <button id="dream" class="dream-btn">🌙 Dream on today's activity</button>
+        <div id="dream-out" class="dream-out">
+          <p class="empty">The dreamer (on-device Gemma) connects your signals into intent — e.g. flights + car rental = a trip. Click to dream.</p>
+        </div>
+      </section>
+      <section id="opinions" class="hidden"></section>
+      <section id="signals" class="hidden"></section>
+    </main>
+
+    <footer>
+      <button id="refresh" class="link">↻ Refresh</button>
+      <button id="clear" class="link danger">Clear</button>
+      <span class="note">on-device · redacted</span>
+    </footer>
+
+    <script src="dist/popup.js"></script>
+  </body>
+</html>
