@@ -1,0 +1,144 @@
+@import "tailwindcss";
+
+/*
+ * Pragya — a calm, warm, single-user assistant shell.
+ * Paper-toned light surface, warm ink, a single muted-amber accent.
+ */
+:root {
+  --background: #f7f5f0;
+  --surface: #fffdf8;
+  --surface-muted: #f0ede5;
+  --foreground: #2b2722;
+  --muted: #7a7268;
+  --border: #e4dfd4;
+  --accent: #b45f2f;
+  --accent-soft: #f3e6da;
+  --bubble-user: #2b2722;
+  --bubble-user-text: #f7f5f0;
+  --bubble-assistant: #fffdf8;
+  --danger: #a23b2c;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-fraunces), ui-serif, Georgia, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1a1816;
+    --surface: #232020;
+    --surface-muted: #2c2826;
+    --foreground: #ece7df;
+    --muted: #9b9288;
+    --border: #353029;
+    --accent: #d98a55;
+    --accent-soft: #2f2620;
+    --bubble-user: #d98a55;
+    --bubble-user-text: #1a1816;
+    --bubble-assistant: #232020;
+    --danger: #e0796a;
+  }
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Thin, unobtrusive scrollbar for the message list. */
+.pragya-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.pragya-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.pragya-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+/* Gentle three-dot "thinking" indicator. */
+@keyframes pragya-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.pragya-dot {
+  animation: pragya-blink 1.4s infinite both;
+}
+.pragya-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.pragya-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Staggered card reveal for the connectors marketplace. */
+@keyframes pragya-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.pragya-rise {
+  animation: pragya-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Detail drawer slide-in + backdrop fade. */
+@keyframes pragya-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.pragya-slide-in {
+  animation: pragya-slide-in 0.32s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes pragya-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.pragya-fade-in {
+  animation: pragya-fade-in 0.2s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pragya-rise,
+  .pragya-slide-in,
+  .pragya-fade-in {
+    animation: none;
+  }
+}
