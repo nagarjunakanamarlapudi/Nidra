@@ -47,7 +47,7 @@ FORM_SYSTEM = (
     "future-guessing, or unobservable personality traits — omit those (they are "
     "dreams, handled elsewhere). Prefer concrete traits like interest:<topic>, "
     "preference:<x>, routine:<x>, intent:<x>. Respond with ONLY JSON: "
-    '{"opinions": [{"trait": "interest:travel", "value": "...", "confidence": 0.0, '
+    '{"opinions": [{"trait": "interest:travel", "value": "...", "confidence": 0.85, '
     '"evidence_fact_ids": ["f1"]}]}'
 )
 
@@ -65,7 +65,7 @@ def build_form_prompt(themes: list[Theme], facts: list[Fact]) -> str:
     lines = [FORM_SYSTEM, "", "THEMES:"]
     for t in themes:
         lines.append(f"# {t.label}")
-        lines += [f"- {by_id[i].id}: {by_id[i].summary}" for i in t.fact_ids if i in by_id]
+        lines += [f"- {i}: {by_id[i].summary}" for i in t.fact_ids if i in by_id]
     return "\n".join(lines)
 
 

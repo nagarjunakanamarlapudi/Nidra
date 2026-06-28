@@ -49,3 +49,22 @@ async def test_form_opinions_parses_cited_opinions() -> None:
             confidence=0.9, evidence_fact_ids=["f1"],
         )
     ]
+
+
+async def test_form_opinions_tolerates_garbage_fields() -> None:
+    facts = [Fact("browser", "search", "x", event_ids=[1], id="f1")]
+    themes = [Theme(label="t", fact_ids=["f1"])]
+
+    async def fake(_prompt: str) -> str:
+        return (
+            '{"opinions": ['
+            '{"trait": "", "value": 1, "confidence": "high", "evidence_fact_ids": ["f1"]},'
+            '{"trait": "intent:x", "value": 1, "confidence": null}'
+            ']}'
+        )
+
+    ops = await form_opinions(themes, facts, fake)
+    assert len(ops) == 1
+    assert ops[0].trait == "intent:x"
+    assert ops[0].confidence == 0.0
+    assert ops[0].evidence_fact_ids == []
