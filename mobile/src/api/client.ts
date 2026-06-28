@@ -41,3 +41,31 @@ export async function sendChat(
   const data = (await res.json()) as { reply: string; conversation_id: number | null };
   return { reply: data.reply, conversationId: data.conversation_id ?? conversationId };
 }
+
+// ---- Dreams (the live home feed) -----------------------------------------
+// A "dream" is one anticipatory hypothesis the backend derived about you — the
+// move + how sure it is + which signals it was stitched from. It's the one read
+// endpoint with real content today, so the home grid is built from it.
+export interface Dream {
+  id: number;
+  hypothesis: string;
+  kind: 'need' | 'suggestion' | 'foresight';
+  confidence: number;
+  provenance: string[];
+  status: string;
+}
+
+// GET /dreams → { dreams: [...] }. Throws on auth/network trouble so the caller
+// (the repository) can fall back to curated content; mirrors sendChat above.
+export async function fetchDreams(): Promise<Dream[]> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/dreams`, { headers: authHeaders() });
+  } catch {
+    throw new Error("Can't reach Nidra — check your connection.");
+  }
+  if (res.status === 401) throw new Error('Unauthorized — the access token is wrong.');
+  if (!res.ok) throw new Error(`Nidra had trouble (${res.status}).`);
+  const data = (await res.json()) as { dreams?: Dream[] };
+  return data.dreams ?? [];
+}
