@@ -9,19 +9,14 @@ deterministic — no network.
 
 from __future__ import annotations
 
-import json
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
-import httpx
 
 if TYPE_CHECKING:
     from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
     from pragya_assistant.memory.models import BrowserActivityEvent
 
-# A completion callable: (user digest) -> raw model text (expected to be JSON).
-DreamFn = Callable[[str], Awaitable[str]]
+from pragya_assistant.agent.completion import CompletionFn, extract_json
 
 SYSTEM = (
     'You are Nidra\'s "dreamer". While the user sleeps you consolidate their recent online '
@@ -140,24 +135,6 @@ def build_digest(events: list[BrowserActivityEvent]) -> str:
     return "\n\n".join(lines) or "(no activity captured)"
 
 
-def extract_json(text: str) -> dict[str, Any]:
-    """Robustly pull a JSON object out of a model response."""
-    if not text:
-        return {}
-    stripped = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        start, end = stripped.find("{"), stripped.rfind("}")
-        if start < 0 or end <= start:
-            return {}
-        try:
-            parsed = json.loads(stripped[start : end + 1])
-        except json.JSONDecodeError:
-            return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 @dataclass(frozen=True)
 class DreamResult:
     generated_from: int
@@ -178,7 +155,7 @@ class DreamerService:
     def __init__(
         self,
         store: BrowserActivityEventStore,
-        complete: DreamFn,
+        complete: CompletionFn,
         *,
         connector_key: str = "browser_activity",
         engine_label: str = "mock",
@@ -190,7 +167,7 @@ class DreamerService:
 
     async def dream(self, *, limit: int = 200) -> DreamResult:
         events = await self._store.recent(self._key, limit=limit)
-        parsed = extract_json(await self._complete(build_digest(events)))
+        parsed = extract_json(await self._complete(SYSTEM + "\n\n" + build_digest(events)))
         persona = parsed.get("persona")
         return DreamResult(
             generated_from=len(events),
@@ -202,27 +179,3 @@ class DreamerService:
         )
 
 
-def ollama_dream_fn(base_url: str, model: str, *, timeout: float = 120.0) -> DreamFn:
-    """The default engine: on-device Gemma 4 via Ollama with forced JSON output."""
-
-    async def _call(digest: str) -> str:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{base_url.rstrip('/')}/api/chat",
-                json={
-                    "model": model,
-                    "stream": False,
-                    "format": "json",
-                    "options": {"temperature": 0.3},
-                    "messages": [
-                        {"role": "system", "content": SYSTEM},
-                        {"role": "user", "content": digest},
-                    ],
-                },
-            )
-            resp.raise_for_status()
-            data: dict[str, Any] = resp.json()
-            message = data.get("message") or {}
-            return str(message.get("content") or "")
-
-    return _call

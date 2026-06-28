@@ -9,30 +9,12 @@ deterministic.
 
 from __future__ import annotations
 
-import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 
-from pragya_assistant.agent.engine import AgentEngine
+from pragya_assistant.agent.completion import CompletionFn, extract_json
 from pragya_assistant.memory.models import Dream
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import UserModelStore
-
-# A completion callable: (prompt) -> raw model text (expected JSON).
-DreamFn = Callable[[str], Awaitable[str]]
-
-
-def engine_dream_fn(engine: AgentEngine) -> DreamFn:
-    """Back the dreamer with the configured agent brain (claude-code / codex /
-    api / ollama) — a one-shot completion, no history. The dream prompt is
-    self-contained (instruction + opinions + track record), so the engine just
-    returns the JSON."""
-
-    async def _call(prompt: str) -> str:
-        reply, _ = await engine.respond([], prompt)
-        return reply
-
-    return _call
 
 _KINDS = {"foresight", "suggestion", "need"}
 
@@ -47,23 +29,6 @@ SYSTEM = (
     'Respond with ONLY JSON: {"dreams": [{"hypothesis": "one clear sentence", '
     '"kind": "foresight|suggestion|need", "confidence": 0.0, "provenance": ["source"]}]}'
 )
-
-
-def extract_json(text: str) -> dict[str, Any]:
-    if not text:
-        return {}
-    s = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        parsed = json.loads(s)
-    except json.JSONDecodeError:
-        start, end = s.find("{"), s.rfind("}")
-        if start < 0 or end <= start:
-            return {}
-        try:
-            parsed = json.loads(s[start : end + 1])
-        except json.JSONDecodeError:
-            return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def build_dream_prompt(opinions: list[Any], record: list[Dream]) -> str:
@@ -101,7 +66,7 @@ class DreamerService:
         self,
         opinions: UserModelStore,
         dreams: DreamStore,
-        complete: DreamFn,
+        complete: CompletionFn,
         *,
         engine_label: str = "mock",
     ) -> None:

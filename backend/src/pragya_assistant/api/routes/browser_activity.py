@@ -16,10 +16,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from pragya_assistant.agent.completion import ollama_completion_fn
 from pragya_assistant.api.auth import require_token
 from pragya_assistant.api.deps import get_session_factory, get_settings_dep
 from pragya_assistant.config import Settings
-from pragya_assistant.connectors.browser_activity.dreamer import DreamerService, ollama_dream_fn
+from pragya_assistant.connectors.browser_activity.dreamer import DreamerService
 from pragya_assistant.connectors.browser_activity.store import (
     BrowserActivityEventStore,
     IngestedEvent,
@@ -100,7 +101,7 @@ async def dream(settings: AppSettings, session_factory: SessionFactory) -> Dream
     store = BrowserActivityEventStore(session_factory)
     service = DreamerService(
         store,
-        ollama_dream_fn(settings.ollama_base_url, settings.dream_model),
+        ollama_completion_fn(settings.ollama_base_url, settings.dream_model),
         engine_label=f"ollama:{settings.dream_model}",
     )
     try:

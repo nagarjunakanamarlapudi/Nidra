@@ -15,7 +15,7 @@ from typing import Any
 
 import structlog
 
-from pragya_assistant.user_model.dreamer import extract_json
+from pragya_assistant.agent.completion import extract_json
 from pragya_assistant.user_model.facts import Fact
 from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
 
