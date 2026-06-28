@@ -1,20 +1,17 @@
 # src/pragya_assistant/user_model/facts.py
 """Stage 0 of the opinion workflow: gather cited FACTS from every source except
 finance (browser, calendar, email, explicit memory). Pure per-source collectors
-(testable without IO) + a builder that fetches, runs them, and numbers the facts.
+(testable without IO) that the query tools wrap, plus a light preferences reader.
 No conclusions — just grounded facts, each tagged with its source ids."""
 
 from __future__ import annotations
 
-import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
-from pragya_assistant.connectors.google_calendar.store import CalendarEventStore
 from pragya_assistant.memory.repositories import PreferenceRepository
 
 
@@ -91,21 +88,10 @@ def collect_memory_facts(
     return facts
 
 
-class _PrefsSource(Protocol):
-    async def get_preferences(self) -> dict[str, str]: ...
-
-
-class _TasksSource(Protocol):
-    async def list_tasks(self, include_done: bool = False) -> list[Any]: ...
-
-
-class _EmailSource(Protocol):
-    async def list_recent(self, n: int = 10) -> list[Any]: ...
-
-
 class PreferenceReader:
     """Light read-only preferences accessor (no embedder needed, unlike
-    MemoryService) so the builder can be wired from a session factory alone."""
+    MemoryService) so it can be wired from a session factory alone — the query
+    tools use it to read explicit preferences without spinning up MemoryService."""
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
@@ -113,60 +99,3 @@ class PreferenceReader:
     async def get_preferences(self) -> dict[str, str]:
         async with self._sf() as s:
             return await PreferenceRepository(s).all_as_dict()
-
-
-class FactDigestBuilder:
-    """Gathers facts from whatever sources are available (skips any that are
-    None / empty) and numbers them f1..fn for citation."""
-
-    def __init__(
-        self,
-        *,
-        browser: BrowserActivityEventStore | None = None,
-        calendar: CalendarEventStore | None = None,
-        email: _EmailSource | None = None,
-        prefs: _PrefsSource | None = None,
-        tasks: _TasksSource | None = None,
-        now: dt.datetime,
-        window_days: int = 30,
-        browser_key: str = "browser_activity",
-        calendar_key: str = "google_calendar",
-    ) -> None:
-        self._browser = browser
-        self._calendar = calendar
-        self._email = email
-        self._prefs = prefs
-        self._tasks = tasks
-        self._now = now
-        self._window = window_days
-        self._browser_key = browser_key
-        self._calendar_key = calendar_key
-
-    async def build(self) -> list[Fact]:
-        collected: list[Fact] = []
-        if self._browser is not None:
-            rows = await self._browser.recent(
-                self._browser_key,
-                types=["search", "reading", "interaction", "action"],
-                since=self._now - dt.timedelta(days=self._window),
-                limit=300,
-            )
-            collected += collect_browser_facts(rows)
-        if self._calendar is not None:
-            # Calendar events are FORWARD-looking (upcoming meetings/bookings = intent),
-            # so look ahead — unlike browsing history, which is in the past.
-            events = await self._calendar.events_between(
-                self._calendar_key,
-                self._now - dt.timedelta(days=1),
-                self._now + dt.timedelta(days=self._window),
-            )
-            collected += collect_calendar_facts(events)
-        if self._email is not None:
-            collected += collect_email_facts(await self._email.list_recent(20))
-        prefs = await self._prefs.get_preferences() if self._prefs is not None else {}
-        tasks = await self._tasks.list_tasks() if self._tasks is not None else []
-        if prefs or tasks:
-            collected += collect_memory_facts(prefs, tasks)
-        for i, f in enumerate(collected, start=1):
-            f.id = f"f{i}"
-        return collected
