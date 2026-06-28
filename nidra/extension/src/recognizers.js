@@ -127,8 +127,11 @@ export function accessibleName(el) {
   if (lbl) return (lbl.textContent || "").replace(/\s+/g, " ").trim();
   const id = el.id;
   if (id && el.ownerDocument) {
-    const forLbl = el.ownerDocument.querySelector(`label[for="${id}"]`);
-    if (forLbl) return (forLbl.textContent || "").replace(/\s+/g, " ").trim();
+    for (const forLbl of el.ownerDocument.querySelectorAll("label[for]")) {
+      if (forLbl.getAttribute("for") === id) {
+        return (forLbl.textContent || "").replace(/\s+/g, " ").trim();
+      }
+    }
   }
   return (el.textContent || el.value || "").replace(/\s+/g, " ").trim();
 }
@@ -359,4 +362,3 @@ export function detectStep(doc, loc) {
     of,
   };
 }
-

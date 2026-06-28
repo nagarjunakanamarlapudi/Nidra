@@ -10,16 +10,16 @@ This is the capture + opinion-forming layer for the *Nidra* concept ("the assist
 |---|---|---|
 | **Article reading** | content script extracts title/author/tags + word count + scroll/dwell | "read *Understanding Raft Consensus* by Jane Doe, 90% scrolled" |
 | **Searches** | query parsed from search-engine URLs (Google/Bing/DDG/Brave/Ecosia) | "searched *raft consensus algorithm*" |
-| **Email (Gmail)** | reads action (read/compose), subject, participant count | "read mail: *Re: Q3 planning…*" (addresses redacted) |
+| **Email (Gmail)** | reads action (read/compose), subject, participant count | "read mail: *Re: Q3 planning…*" |
 | **Calendar (GCal)** | view + event creation (title/time) | "created event: *Design review with team*" |
 | **Browsing history** | `chrome.history` backfill on install (last 3 days) | cold-start signal (Chrome only) |
-| **Form inputs** | non-sensitive fields + search boxes (redacted) | search/filter terms |
-| **Selections** | highlighted text ≥ 12 chars (redacted) | what you copy/quote |
+| **Form inputs** | non-sensitive fields + search boxes, with secrets masked | search/filter terms |
+| **Selections** | highlighted text ≥ 12 chars, with secrets masked | what you copy/quote |
 
 ## Privacy (first-class, not bolted on)
-- **On-device** — events live in `chrome.storage.local`; the optional collector is `localhost` only. Nothing goes to a third party.
-- **Never captures secrets** — password / cc / cvv / ssn / otp fields are skipped entirely; emails, card numbers, SSNs, and long digit runs are **redacted** out of every captured string.
-- **Domain denylist** — banking / health / password-manager domains are ignored by default.
+- **Local-first** — events live in `chrome.storage.local`; dev builds can mirror to the local Pragya backend or local collector. Nothing goes to a third party by default.
+- **Never captures secrets** — password / cc / cvv / ssn / otp fields are skipped entirely; payment cards and SSNs are masked out of captured strings. Contact details like names, emails, and phone numbers are intentionally kept as user-model signal.
+- **Domain denylist** — banking / crypto / password-manager / auth domains are ignored by default.
 - **Pause anytime** — one toggle in the popup; every inferred belief carries provenance.
 
 ## Architecture

@@ -11228,8 +11228,11 @@ ${contentString}
     if (lbl) return (lbl.textContent || "").replace(/\s+/g, " ").trim();
     const id = el.id;
     if (id && el.ownerDocument) {
-      const forLbl = el.ownerDocument.querySelector(`label[for="${id}"]`);
-      if (forLbl) return (forLbl.textContent || "").replace(/\s+/g, " ").trim();
+      for (const forLbl of el.ownerDocument.querySelectorAll("label[for]")) {
+        if (forLbl.getAttribute("for") === id) {
+          return (forLbl.textContent || "").replace(/\s+/g, " ").trim();
+        }
+      }
     }
     return (el.textContent || el.value || "").replace(/\s+/g, " ").trim();
   }
@@ -11564,26 +11567,33 @@ ${contentString}
     if (!event) return null;
     if (!DECISION_TYPES.has(event.type)) {
       const d2 = event.data || {};
-      const data = typeof d2.content === "string" ? { ...d2, content: redactString(d2.content).value } : d2;
+      const title2 = redactString(event.title || "");
+      const content = typeof d2.content === "string" ? redactString(d2.content) : null;
+      const data = content ? { ...d2, content: content.value } : d2;
       return {
         ...event,
         url: scrubUrl(event.url),
-        title: redactString(event.title || "").value,
-        data
+        title: title2.value,
+        data,
+        redacted: Boolean(event.redacted || title2.redacted || content?.redacted)
       };
     }
     const d = event.data || {};
+    const value = d.value == null ? "" : String(d.value);
     if (event.type !== "action" && !SAFE_CONTROLS.has(d.control)) return null;
-    if (SENSITIVE_CTX.test(`${d.group || ""} ${d.label || ""}`)) return null;
-    if (INSTRUMENT.test(d.label || "")) return null;
-    const label = redactString(d.label || "").value;
-    const group = redactString(d.group || "").value;
-    if (label && /^\s*\[[^\]]+\]\s*$/.test(label)) return null;
+    if (SENSITIVE_CTX.test(`${d.group || ""} ${d.label || ""} ${value}`)) return null;
+    if (INSTRUMENT.test(`${d.label || ""} ${value}`)) return null;
+    if (value && redactString(value).redacted) return null;
+    const label = redactString(d.label || "");
+    const group = redactString(d.group || "");
+    if (label.value && /^\s*\[[^\]]+\]\s*$/.test(label.value)) return null;
+    const title = redactString(event.title || "");
     return {
       ...event,
       url: scrubUrl(event.url),
-      title: redactString(event.title || "").value,
-      data: { ...d, label, group }
+      title: title.value,
+      data: { ...d, label: label.value, group: group.value },
+      redacted: Boolean(event.redacted || title.redacted || label.redacted || group.redacted)
     };
   }
 
@@ -11889,9 +11899,16 @@ ${contentString}
     addEventListener("hashchange", onRoute);
     addEventListener("popstate", onRoute);
     const ps = history.pushState;
+    const rs = history.replaceState;
     history.pushState = function() {
-      ps.apply(this, arguments);
+      const ret = ps.apply(this, arguments);
       onRoute();
+      return ret;
+    };
+    history.replaceState = function() {
+      const ret = rs.apply(this, arguments);
+      onRoute();
+      return ret;
     };
     let moTimer;
     try {

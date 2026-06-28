@@ -294,7 +294,9 @@ function watchSpa() {
   addEventListener("hashchange", onRoute);
   addEventListener("popstate", onRoute);
   const ps = history.pushState;
-  history.pushState = function () { ps.apply(this, arguments); onRoute(); };
+  const rs = history.replaceState;
+  history.pushState = function () { const ret = ps.apply(this, arguments); onRoute(); return ret; };
+  history.replaceState = function () { const ret = rs.apply(this, arguments); onRoute(); return ret; };
   let moTimer;
   try {
     new MutationObserver(() => { clearTimeout(moTimer); moTimer = setTimeout(onRoute, 1500); })

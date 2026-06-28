@@ -41,37 +41,44 @@ export function gate(event) {
   // captured free-text `content` as a backstop.
   if (!DECISION_TYPES.has(event.type)) {
     const d = event.data || {};
-    const data = typeof d.content === "string" ? { ...d, content: redactString(d.content).value } : d;
+    const title = redactString(event.title || "");
+    const content = typeof d.content === "string" ? redactString(d.content) : null;
+    const data = content ? { ...d, content: content.value } : d;
     return {
       ...event,
       url: scrubUrl(event.url),
-      title: redactString(event.title || "").value,
+      title: title.value,
       data,
+      redacted: Boolean(event.redacted || title.redacted || content?.redacted),
     };
   }
 
   const d = event.data || {};
+  const value = d.value == null ? "" : String(d.value);
 
   // 1. Allowlist the control kind (impression/interaction carry one; action does not).
   if (event.type !== "action" && !SAFE_CONTROLS.has(d.control)) return null;
 
-  // 2. Sensitive section/label → DROP the whole event.
-  if (SENSITIVE_CTX.test(`${d.group || ""} ${d.label || ""}`)) return null;
+  // 2. Sensitive section/label/value → DROP the whole event.
+  if (SENSITIVE_CTX.test(`${d.group || ""} ${d.label || ""} ${value}`)) return null;
 
-  // 3. Instrument identifier in the label → DROP (covers "Visa ••4242", "•••• 1111").
-  if (INSTRUMENT.test(d.label || "")) return null;
+  // 3. Instrument identifier in the label/value → DROP (covers "Visa ••4242", "•••• 1111").
+  if (INSTRUMENT.test(`${d.label || ""} ${value}`)) return null;
+  if (value && redactString(value).redacted) return null;
 
   // 4. Treat label/group as untrusted free text — redact. If a label collapses to
-  //    pure PII, drop it rather than emit a bare "[email]"/"[phone]".
-  const label = redactString(d.label || "").value;
-  const group = redactString(d.group || "").value;
-  if (label && /^\s*\[[^\]]+\]\s*$/.test(label)) return null;
+  //    a bare mask like "[card]" or "[ssn]", drop it rather than emit the mask.
+  const label = redactString(d.label || "");
+  const group = redactString(d.group || "");
+  if (label.value && /^\s*\[[^\]]+\]\s*$/.test(label.value)) return null;
+  const title = redactString(event.title || "");
 
   // 5. Scrub the envelope — a sensitive page leaks regardless of value scrubbing.
   return {
     ...event,
     url: scrubUrl(event.url),
-    title: redactString(event.title || "").value,
-    data: { ...d, label, group },
+    title: title.value,
+    data: { ...d, label: label.value, group: group.value },
+    redacted: Boolean(event.redacted || title.redacted || label.redacted || group.redacted),
   };
 }

@@ -63,6 +63,11 @@ test("elementKey is stable across re-render/position and bounded", () => {
   assert.ok(k1.length <= 64);
 });
 
+test("accessibleName handles quoted ids without building an invalid selector", () => {
+  const doc = page(`<label for='a&quot;b'>Safe label</label><input id='a&quot;b'>`);
+  assert.equal(R.accessibleName(doc.querySelector("input")), "Safe label");
+});
+
 // ---- narrowed redaction (cards + SSNs only; contact details kept) ----
 test("redactString keeps phone/DOB, masks only cards + SSNs", () => {
   assert.equal(R.redactString("call (415) 555-1234").redacted, false); // phone kept
@@ -100,6 +105,37 @@ test("gate DROPs unknown controls and password/credential sections", () => {
   );
 });
 
+test("gate DROPs payment instruments carried in dropdown values", () => {
+  assert.equal(
+    gate(
+      makeEvent("interaction", {
+        data: {
+          control: "dropdown",
+          group: "Payment methods",
+          label: "Payment method",
+          value: "Visa ••4242",
+          valueClass: "enum",
+        },
+      })
+    ),
+    null
+  );
+  assert.equal(
+    gate(
+      makeEvent("interaction", {
+        data: {
+          control: "dropdown",
+          group: "Payment methods",
+          label: "Payment method",
+          value: "4111 1111 1111 1111",
+          valueClass: "enum",
+        },
+      })
+    ),
+    null
+  );
+});
+
 test("gate scrubs the envelope: strips url query, masks a card in the title, keeps email", () => {
   const ev = gate(
     makeEvent("interaction", {
@@ -113,4 +149,19 @@ test("gate scrubs the envelope: strips url query, masks a card in the title, kee
   assert.match(ev.title, /\[card\]/, "card masked in the title");
   assert.doesNotMatch(ev.title, /4111/);
   assert.match(ev.title, /bob@corp\.com/, "email kept (useful signal)");
+  assert.equal(ev.redacted, true);
+});
+
+test("gate marks non-decision events redacted when it masks title or content", () => {
+  const ev = gate(
+    makeEvent("pageview", {
+      url: "https://example.com/page?token=secret123",
+      title: "card 4111 1111 1111 1111",
+      data: { content: "ssn 123-45-6789" },
+    })
+  );
+  assert.ok(!/token=secret123/.test(ev.url), "query string must be stripped");
+  assert.match(ev.title, /\[card\]/);
+  assert.match(ev.data.content, /\[ssn\]/);
+  assert.equal(ev.redacted, true);
 });
