@@ -153,8 +153,12 @@ class FactDigestBuilder:
             )
             collected += collect_browser_facts(rows)
         if self._calendar is not None:
+            # Calendar events are FORWARD-looking (upcoming meetings/bookings = intent),
+            # so look ahead — unlike browsing history, which is in the past.
             events = await self._calendar.events_between(
-                self._calendar_key, self._now - dt.timedelta(days=self._window), self._now
+                self._calendar_key,
+                self._now - dt.timedelta(days=1),
+                self._now + dt.timedelta(days=self._window),
             )
             collected += collect_calendar_facts(events)
         if self._email is not None:

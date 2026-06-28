@@ -13,9 +13,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
+
 from pragya_assistant.user_model.dreamer import extract_json
 from pragya_assistant.user_model.facts import Fact
 from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
+
+logger = structlog.get_logger(__name__)
 
 LlmFn = Callable[[str], Awaitable[str]]
 
@@ -92,12 +96,15 @@ async def form_opinions(themes: list[Theme], facts: list[Fact], fn: LlmFn) -> li
         trait = str(raw.get("trait") or "").strip()
         if not trait:
             continue
+        value = raw.get("value")
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
         try:
             conf = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
         except (TypeError, ValueError):
             conf = 0.0
         ids = [str(i) for i in raw.get("evidence_fact_ids", []) if isinstance(i, str | int)]
-        out.append(ProposedOpinion(trait, raw.get("value"), conf, ids))
+        out.append(ProposedOpinion(trait, value, conf, ids))
     return out
 
 
@@ -136,7 +143,13 @@ def validate_citations(opinions: list[ProposedOpinion], facts: list[Fact]) -> li
                 },
             )
         )
-    return snaps
+    # Dedup by trait — keep the best-supported snapshot so the survivor is deterministic.
+    best: dict[str, TraitSnapshot] = {}
+    for s in snaps:
+        cur = best.get(s.trait)
+        if cur is None or (s.confidence, s.evidence) > (cur.confidence, cur.evidence):
+            best[s.trait] = s
+    return list(best.values())
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +179,8 @@ async def review_opinions(snaps: list[TraitSnapshot], fn: LlmFn) -> list[TraitSn
         return []
     parsed = extract_json(await fn(build_review_prompt(snaps)))
     reviews = parsed.get("reviews", []) if isinstance(parsed, dict) else []
+    if snaps and not reviews:
+        logger.warning("opinion_reviewer_empty", n_snaps=len(snaps))
     by_trait: dict[str, dict[str, Any]] = {
         str(r.get("trait")): r for r in reviews if isinstance(r, dict) and r.get("trait")
     }

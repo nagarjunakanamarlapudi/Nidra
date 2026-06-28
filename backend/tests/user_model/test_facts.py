@@ -83,3 +83,18 @@ async def test_builder_skips_unavailable_sources(
     # No sources at all → empty digest, no error.
     builder = FactDigestBuilder(now=dt.datetime(2026, 6, 27, 12))
     assert await builder.build() == []
+
+
+async def test_builder_queries_calendar_forward_window() -> None:
+    captured: dict[str, dt.datetime] = {}
+
+    class _FakeCal:
+        async def events_between(self, key: str, start: dt.datetime, end: dt.datetime) -> list:
+            captured["start"], captured["end"] = start, end
+            return [SimpleNamespace(id=7, summary="Flight to Tokyo",
+                                    start=end - dt.timedelta(days=1))]
+
+    now = dt.datetime(2026, 6, 27, 12)
+    facts = await FactDigestBuilder(calendar=_FakeCal(), now=now, window_days=30).build()
+    assert captured["end"] > now  # looks ahead, not behind
+    assert any("Flight to Tokyo" in f.summary for f in facts)

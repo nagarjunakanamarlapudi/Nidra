@@ -77,6 +77,36 @@ async def test_form_opinions_tolerates_garbage_fields() -> None:
     assert ops[0].evidence_fact_ids == []
 
 
+async def test_form_opinions_drops_null_value() -> None:
+    facts = [Fact("browser", "search", "x", event_ids=[1], id="f1")]
+    themes = [Theme(label="t", fact_ids=["f1"])]
+
+    async def fake(_prompt: str) -> str:
+        return (
+            '{"opinions": ['
+            '{"trait": "intent:travel", "value": null, "confidence": 0.8,'
+            ' "evidence_fact_ids": ["f1"]},'
+            '{"trait": "intent:valid", "value": "real value", "confidence": 0.8,'
+            ' "evidence_fact_ids": ["f1"]}'
+            ']}'
+        )
+
+    ops = await form_opinions(themes, facts, fake)
+    assert len(ops) == 1
+    assert ops[0].trait == "intent:valid"
+
+
+def test_validate_dedups_by_trait_keeping_best() -> None:
+    facts = [Fact("browser", "search", "a", event_ids=[1], id="f1"),
+             Fact("calendar", "event", "b", event_ids=[2], id="f2")]
+    ops = [
+        ProposedOpinion("intent:x", "weak", 0.5, ["f1"]),
+        ProposedOpinion("intent:x", "strong", 0.9, ["f1", "f2"]),
+    ]
+    snaps = validate_citations(ops, facts)
+    assert len(snaps) == 1 and snaps[0].value == "strong"
+
+
 def test_validate_drops_uncited_and_unresolvable() -> None:
     facts = [Fact("browser", "search", "searched 'tokyo'", event_ids=[1], id="f1")]
     ops = [
