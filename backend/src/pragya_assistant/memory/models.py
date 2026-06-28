@@ -391,3 +391,102 @@ class Dream(Base):
     created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())
     expires_at: Mapped[dt.datetime | None] = mapped_column(default=None)
     resolved_at: Mapped[dt.datetime | None] = mapped_column(default=None)
+
+
+class ScenarioBatch(Base):
+    """A set of competing, falsifiable branches predicted from ONE point-in-time
+    context snapshot — the unit of generation, honest verification, and RSI.
+
+    Branches are auto-verified against real activity in ``(created_at, now]``. The
+    ONLY thing that refutes a branch is a *competing sibling* being corroborated
+    (we mis-ranked observable reality). A batch where no branch matched simply
+    EXPIRES — a weak signal, never a negative, because the user may have acted on
+    factors we cannot observe. Resolved batches are the RSI track record; like
+    dreams, a scenario is NEVER written as an Opinion (the one-way valve).
+    """
+
+    __tablename__ = "scenario_batches"
+    __table_args__ = (Index("ix_scenario_batches_status_due", "status", "due_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The fenced "current state" the branches were derived from (cited fact
+    # summaries). The point-in-time anchor — verification reads activity strictly
+    # after ``created_at``, no look-ahead.
+    context_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | resolved | expired
+    due_at: Mapped[dt.datetime] = mapped_column(index=True)  # = max(branch.deadline_at)
+    # Reconciler's gap diagnosis on a mis-ranked resolved batch (else null):
+    # {what_we_missed, hypothesized_missing_context, confidence}.
+    diagnosis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # How many decaying policy lessons were injected at generation — lets the
+    # scorecard separate ΔPolicy (RSI) from ΔState (fresher opinions).
+    lessons_used: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(default=None)
+
+    branches: Mapped[list[Scenario]] = orm_relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="Scenario.rank",
+    )
+
+
+class Scenario(Base):
+    """One competing branch: a falsifiable prediction of a near-future user action,
+    auto-verified against real activity. NEVER written as an Opinion (one-way valve).
+    """
+
+    __tablename__ = "scenarios"
+    __table_args__ = (
+        Index("ix_scenarios_batch", "batch_id"),
+        Index("ix_scenarios_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("scenario_batches.id", ondelete="CASCADE"), index=True
+    )
+    summary: Mapped[str] = mapped_column(Text)  # one-line falsifiable prediction
+    checkpoints: Mapped[list[str]] = mapped_column(JSONB)  # observable signals; [0] = the core
+    prior: Mapped[float] = mapped_column(default=0.0)  # batch priors sum ≈ 1
+    rank: Mapped[int] = mapped_column(default=0)  # 1 = top prior (frozen at generation)
+    deadline_at: Mapped[dt.datetime] = mapped_column(index=True)  # = created_at + horizon
+    # open → confirmed | refuted | expired
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    # {signal, matched_event_ids, matched_text, score, at}; signal ∈
+    # corroborated | mis_ranked_competitor | no_match.
+    outcome: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # Same evidence-chain shape as opinions: {method, evidence_fact_ids,
+    # fact_summaries, event_ids, refs}.
+    derivation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(default=None)
+
+    batch: Mapped[ScenarioBatch] = orm_relationship(back_populates="branches")
+
+
+class ScenarioLesson(Base):
+    """A low-weight, decaying in-context exemplar from a mis-ranked batch (Phase-1
+    RSI; no weight updates).
+
+    Injected as a HEDGED exploration hint into the next generation prompt — never a
+    rule, never a prior. Derived from REAL outcomes, never the agent's self-score.
+    A miss may be confounded by unobservable factors, so a lesson is a *hypothesis*
+    that decays with age and is capped in number, and can therefore never dominate
+    the agent's predictions.
+    """
+
+    __tablename__ = "scenario_lessons"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("scenario_batches.id", ondelete="CASCADE"), index=True
+    )
+    # Each entry: {summary, prior, rank} for one predicted branch.
+    predicted_branches: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    what_happened: Mapped[dict[str, Any]] = mapped_column(JSONB)  # {winner_summary, matched_text}
+    hypothesized_missing_context: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    base_weight: Mapped[float] = mapped_column(default=1.0)
+    created_at: Mapped[dt.datetime] = mapped_column(server_default=func.now())

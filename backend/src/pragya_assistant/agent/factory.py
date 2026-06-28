@@ -203,6 +203,19 @@ def build_opinion_engine(settings: Settings, *, tools: list[Tool]) -> AgentEngin
     return _make_engine(settings, tools=tools, system_prompt=OPINION_SYSTEM, builtin_tools=())
 
 
+def build_scenario_engine(settings: Settings, *, tools: list[Tool]) -> AgentEngine:
+    """Engine for the scenario-maker job: the configured brain wired with the
+    read-only query tools + the scenario-forming prompt, and CONFINED.
+
+    Identical confinement to :func:`build_opinion_engine` (``builtin_tools=()`` so
+    no web/file/bash; harden + guard + output-scrub for free) — the scenario agent
+    only investigates via the in-process query tools and predicts; it can neither
+    act nor exfiltrate."""
+    from pragya_assistant.user_model.scenario_agent import SCENARIO_SYSTEM
+
+    return _make_engine(settings, tools=tools, system_prompt=SCENARIO_SYSTEM, builtin_tools=())
+
+
 def build_confined_engine(settings: Settings, *, tools: list[Tool] | None = None) -> AgentEngine:
     """A confined engine: NO web built-ins (``builtin_tools=()``) and — for Codex
     — no memory MCP and no sandbox bypass. Hardened + guarded like every engine.

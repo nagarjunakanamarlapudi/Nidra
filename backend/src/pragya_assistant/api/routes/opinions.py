@@ -37,16 +37,15 @@ SessionFactory = Annotated[async_sessionmaker[AsyncSession], Depends(get_session
 AppSettings = Annotated[Settings, Depends(get_settings_dep)]
 
 
-@router.post("/opinions/refresh")
-async def refresh_opinions(
-    settings: AppSettings, session_factory: SessionFactory
-) -> dict[str, Any]:
-    """Form fact-grounded opinions via the tool-using opinion agent (investigate ->
-    validate -> review -> persist). The agent pulls browser+calendar+email+memory
-    through read-only query tools that fill an evidence ledger; finance is Phase 2.
-    Runs on a CONFINED engine (no web/file/bash, output-scrubbed) — never the
-    web-enabled chat engine — so the untrusted ingested facts can't drive tool use
-    or exfiltrate. Manual + hourly via cron."""
+async def form_opinions(
+    settings: Settings, session_factory: async_sessionmaker[AsyncSession]
+) -> tuple[int, int]:
+    """Run the opinion workflow once and return ``(traits, facts)`` counts.
+
+    Shared by the ``/opinions/refresh`` route and the scenario reconciler's ΔState
+    correction (re-derive Opinions from the new real signals). Runs on a CONFINED
+    engine (no web/file/bash, output-scrubbed) — never the web-enabled chat engine —
+    so the untrusted ingested facts can't drive tool use or exfiltrate."""
     now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
     ledger = EvidenceLedger()
     tools = build_query_tools(
@@ -65,11 +64,21 @@ async def refresh_opinions(
         review_fn = build_confined_completion_fn(settings)
     model = UserModelStore(session_factory)
     workflow = OpinionWorkflow(model, engine=engine, review_fn=review_fn, ledger=ledger)
+    formed = await workflow.run()
+    return len(formed), len(ledger.facts)
+
+
+@router.post("/opinions/refresh")
+async def refresh_opinions(
+    settings: AppSettings, session_factory: SessionFactory
+) -> dict[str, Any]:
+    """Form fact-grounded opinions via the tool-using opinion agent (investigate ->
+    validate -> review -> persist). Manual + hourly via cron."""
     try:
-        formed = await workflow.run()
+        traits, facts = await form_opinions(settings, session_factory)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Opinion workflow unavailable: {exc}",
         ) from exc
-    return {"ok": True, "traits": len(formed), "facts": len(ledger.facts)}
+    return {"ok": True, "traits": traits, "facts": facts}

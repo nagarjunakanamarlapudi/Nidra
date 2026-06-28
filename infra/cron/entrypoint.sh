@@ -21,10 +21,14 @@ OPINIONS_MINUTE="${OPINIONS_MINUTE:-7}"
 
 # Build the crontab. The nightly dreamer (default 00:00) refreshes Opinions from
 # real signals, then dreams on top of them — both behind the bearer token.
+# Scenarios: verify open branches every 15 min (resolve + reconcile mis-ranks);
+# generate a fresh batch every 3 hours, verify-first so the track record is current.
 CRONTAB="${DIGEST_MINUTE} ${DIGEST_HOUR} * * * ${CURL_CMD} -X POST \"${API_BASE}/digests/run\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1
 ${FINANCE_SYNC_MINUTE} ${FINANCE_SYNC_HOUR} * * * ${CURL_CMD} -X POST \"${API_BASE}/finance/sync\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1
 ${DREAM_MINUTE} ${DREAM_HOUR} * * * ( ${CURL_CMD} -X POST \"${API_BASE}/opinions/refresh\" -H \"${AUTH_HEADER}\" ; ${CURL_CMD} -X POST \"${API_BASE}/dreams/run\" -H \"${AUTH_HEADER}\" ) >/proc/1/fd/1 2>&1
-${OPINIONS_MINUTE} * * * * ${CURL_CMD} -X POST \"${API_BASE}/opinions/refresh\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1"
+${OPINIONS_MINUTE} * * * * ${CURL_CMD} -X POST \"${API_BASE}/opinions/refresh\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1
+${SCENARIO_VERIFY_CRON:-*/15 * * * *} ${CURL_CMD} -X POST \"${API_BASE}/scenarios/verify\" -H \"${AUTH_HEADER}\" >/proc/1/fd/1 2>&1
+${SCENARIO_GEN_CRON:-17 */3 * * *} ( ${CURL_CMD} -X POST \"${API_BASE}/scenarios/verify\" -H \"${AUTH_HEADER}\" ; ${CURL_CMD} -X POST \"${API_BASE}/scenarios/run\" -H \"${AUTH_HEADER}\" ) >/proc/1/fd/1 2>&1"
 
 if [ "${FINANCE_WEEKLY_ENABLED}" = "true" ]; then
     DOW="$(day_to_dow "${FINANCE_WEEKLY_DAY}")"
