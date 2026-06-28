@@ -15,6 +15,7 @@ from pragya_assistant.agent.claude_code_engine import ClaudeCodeEngine
 from pragya_assistant.agent.codex_engine import CodexEngine
 from pragya_assistant.agent.core import LoopEngine
 from pragya_assistant.agent.engine import AgentEngine
+from pragya_assistant.agent.guard import guard
 from pragya_assistant.agent.prompts import build_system_prompt
 from pragya_assistant.agent.tools import Tool, ToolRegistry
 from pragya_assistant.agent.toolset import build_agent_tools
@@ -81,20 +82,26 @@ def build_engine(
         connector_tools=connector_tools,
         session_factory=session_factory,
     )
+    # Every engine is wrapped in ``guard`` so its output is always scrubbed of
+    # secrets — the single, engine-agnostic chokepoint of the output defense.
     if engine in _LOOP_PROVIDERS:
         provider = build_chat_provider(settings, _LOOP_PROVIDERS[engine])
-        return LoopEngine(
-            provider=provider,
-            registry=ToolRegistry(tools),
-            system_prompt=build_system_prompt(),
+        return guard(
+            LoopEngine(
+                provider=provider,
+                registry=ToolRegistry(tools),
+                system_prompt=build_system_prompt(),
+            )
         )
     if engine == "codex":
-        return CodexEngine(
-            model=settings.codex_model,
-            system_prompt=build_system_prompt(),
-            mcp_command=[sys.executable, "-m", "pragya_assistant.mcp_memory"],
-            mcp_env=_codex_mcp_env(settings),
-            bypass_sandbox=True,
+        return guard(
+            CodexEngine(
+                model=settings.codex_model,
+                system_prompt=build_system_prompt(),
+                mcp_command=[sys.executable, "-m", "pragya_assistant.mcp_memory"],
+                mcp_env=_codex_mcp_env(settings),
+                bypass_sandbox=True,
+            )
         )
     if engine == "claude-code":
         # ``builtin_tools`` are the SDK built-ins this engine may use (e.g.
@@ -103,10 +110,12 @@ def build_engine(
         # (seeded from ``settings.web_search_enabled``) and are threaded in by the
         # connector manager. Background-job builders pass nothing → () → no
         # built-ins, so only chat keeps web. Everything else stays confined.
-        return ClaudeCodeEngine(
-            tools=tools,
-            system_prompt=build_system_prompt(),
-            model=settings.claude_code_model,
-            builtin_tools=builtin_tools,
+        return guard(
+            ClaudeCodeEngine(
+                tools=tools,
+                system_prompt=build_system_prompt(),
+                model=settings.claude_code_model,
+                builtin_tools=builtin_tools,
+            )
         )
     raise ValueError(f"Unknown agent engine: {engine!r}")
