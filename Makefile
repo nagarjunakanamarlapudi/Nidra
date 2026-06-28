@@ -25,7 +25,8 @@ MSG ?= Say hello in one short sentence and tell me which assistant engine you ar
         test backend-test web-test \
         lint backend-lint web-lint typecheck fmt fmt-check \
         check backend-check web-check docs-check smoke engine-smoke backup restore clean \
-        finance-sync google-oauth hooks security
+        finance-sync google-oauth hooks security \
+        extension-build install-extension run-extension extension-package
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -179,6 +180,33 @@ restore: db-up  ## Restore the database: make restore FILE=backups/pragya-....sq
 clean:  ## Remove caches and build artifacts
 	rm -rf backend/.pytest_cache backend/.mypy_cache backend/.ruff_cache backend/.coverage frontend/.next
 	@echo "cleaned caches"
+
+# ---- browser extension (Nidra) ----
+EXT_DIR := $(abspath nidra/extension)
+
+extension-build:  ## Build the Nidra extension (installs deps, bakes root .env → extension/dist/)
+	cd nidra && { [ -d node_modules ] || npm install; } && npm run build
+
+install-extension: extension-build  ## Build Nidra, then open Chrome's extensions page to load it unpacked
+	@echo "Nidra extension built. Load it unpacked from:"
+	@echo "  $(EXT_DIR)"
+	@open -R "$(EXT_DIR)" 2>/dev/null || true
+	@open -a "Google Chrome" "chrome://extensions/" 2>/dev/null || true
+	@echo "→ chrome://extensions: turn on Developer mode → 'Load unpacked' → pick the folder above."
+	@echo "  Already loaded? Just click the ⟳ reload icon on the Nidra card to pick up this rebuild."
+
+run-extension: extension-build  ## Launch a throwaway Chrome with Nidra preloaded (separate dev profile, zero clicks)
+	@open -na "Google Chrome" --args \
+		--user-data-dir="/tmp/nidra-chrome-dev" \
+		--load-extension="$(EXT_DIR)" \
+		--no-first-run --no-default-browser-check \
+		&& echo "Launched Chrome (dev profile at /tmp/nidra-chrome-dev) with Nidra loaded." \
+		|| echo "Couldn't auto-launch; use 'make install-extension' and load it manually."
+
+extension-package:  ## Build the store artifact: NIDRA_BACKEND_URL=https://… make extension-package
+	cd nidra && { [ -d node_modules ] || npm install; } && NIDRA_ENV=prod npm run build
+	@echo "→ Chrome: upload the zip above at https://chrome.google.com/webstore/devconsole"
+	@echo "  Safari/iOS: cd nidra && npm run ios, then archive + submit in Xcode."
 
 # ---- security ----
 hooks:  ## Install pre-commit hooks (run once after clone)

@@ -30,10 +30,6 @@
     const interest = /* @__PURE__ */ new Map();
     const interestEvidence = /* @__PURE__ */ new Map();
     for (const e of reading) {
-      for (const t of e.data?.tags || []) {
-        bump(interest, t, 3);
-        bump(interestEvidence, t);
-      }
       for (const t of tokenize(e.data?.title)) {
         bump(interest, t, 1);
       }
@@ -77,7 +73,6 @@
     };
     const inReading = /* @__PURE__ */ new Set();
     for (const e of reading) {
-      (e.data?.tags || []).forEach((t) => inReading.add(t));
       tokenize(e.data?.title).forEach((t) => inReading.add(t));
     }
     const inSearch = /* @__PURE__ */ new Set();
@@ -97,7 +92,7 @@
         statement: `Actively interested in "${interests[0].topic}"`,
         confidence: conf(interests[0].evidence, 4),
         evidence: interests[0].evidence,
-        provenance: ["reading.tags", "search.query"]
+        provenance: ["reading.title", "search.query"]
       });
     }
     if (activeProjects[0]) {
@@ -147,9 +142,15 @@
     const byKey = /* @__PURE__ */ new Map();
     for (const e of interactions) bump(byKey, e.data?.elementKey);
     const deliberation = [...byKey.values()].filter((n) => n > 1).length;
-    const reached = actions.filter((e) => /reached/.test(e.data?.milestone || "")).length;
-    const abandonedN = actions.filter((e) => e.data?.milestone === "abandoned").length;
-    const abandonmentRate = reached ? Math.round(abandonedN / reached * 100) / 100 : abandonedN ? 1 : 0;
+    const flowsEntered = new Set(
+      actions.filter((e) => /reached|advanced/.test(e.data?.milestone || "")).map((e) => e.data?.flow).filter(Boolean)
+    );
+    const flowsSubmitted = new Set(
+      actions.filter((e) => e.data?.milestone === "submitted").map((e) => e.data?.flow).filter(Boolean)
+    );
+    const reached = flowsEntered.size;
+    const abandonedN = [...flowsEntered].filter((f) => !flowsSubmitted.has(f)).length;
+    const abandonmentRate = reached ? Math.round(abandonedN / reached * 100) / 100 : 0;
     const groupSet = /* @__PURE__ */ new Set();
     for (const e of [...impressions, ...interactions]) if (e.data?.group) groupSet.add(e.data.group);
     const decisionStyle = {
@@ -229,7 +230,7 @@
     "interaction",
     // a semantic click / toggle / select — the decision, never the raw value
     "action"
-    // a funnel milestone (reached_checkout / submitted / completed / abandoned)
+    // a flow milestone (reached / advanced / submitted) in a multi-step flow
   ]);
   var SOURCES = Object.freeze({
     GMAIL: "gmail",
@@ -244,7 +245,10 @@
     return {
       v: SCHEMA_VERSION,
       type,
-      ts: fields.ts ?? Date.now(),
+      // Integer epoch-ms. chrome.history's lastVisitTime is a double (fractional
+      // ms), and the backend ingest model types ts as an int — a fractional ts is
+      // rejected (422). Round here so every producer (live + history backfill) is safe.
+      ts: Math.round(fields.ts ?? Date.now()),
       url: fields.url ?? null,
       domain: fields.domain ?? null,
       title: fields.title ?? null,
@@ -264,42 +268,36 @@
       return null;
     }
   }
-  var EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
   var CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
-  var SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
-  var PHONE_RE = /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g;
-  var DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g;
-  var LONG_NUM_RE = /\b\d{9,}\b/g;
+  var SSN_RE = /\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/g;
+  function luhnValid(s) {
+    const digits = s.replace(/\D/g, "");
+    if (digits.length < 13 || digits.length > 19) return false;
+    let sum = 0;
+    let alt = false;
+    for (let i = digits.length - 1; i >= 0; i--) {
+      let d = digits.charCodeAt(i) - 48;
+      if (alt) {
+        d *= 2;
+        if (d > 9) d -= 9;
+      }
+      sum += d;
+      alt = !alt;
+    }
+    return sum % 10 === 0;
+  }
   function redactString(input) {
     if (typeof input !== "string" || !input) return { value: input ?? null, redacted: false, kinds: [] };
     const kinds = [];
-    let value = input;
-    if (EMAIL_RE.test(value)) {
-      kinds.push("email");
-      value = value.replace(EMAIL_RE, "[email]");
-    }
-    if (CARD_RE.test(value)) {
-      kinds.push("card");
-      value = value.replace(CARD_RE, "[card]");
-    }
-    if (SSN_RE.test(value)) {
-      kinds.push("ssn");
-      value = value.replace(SSN_RE, "[ssn]");
-    }
-    if (PHONE_RE.test(value)) {
-      kinds.push("phone");
-      value = value.replace(PHONE_RE, "[phone]");
-    }
-    if (DATE_RE.test(value)) {
-      kinds.push("date");
-      value = value.replace(DATE_RE, "[date]");
-    }
-    if (LONG_NUM_RE.test(value)) {
-      kinds.push("number");
-      value = value.replace(LONG_NUM_RE, "[number]");
-    }
-    EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = 0;
-    PHONE_RE.lastIndex = DATE_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
+    let value = input.replace(CARD_RE, (m) => {
+      if (!luhnValid(m)) return m;
+      if (!kinds.includes("card")) kinds.push("card");
+      return "[card]";
+    });
+    value = value.replace(SSN_RE, () => {
+      if (!kinds.includes("ssn")) kinds.push("ssn");
+      return "[ssn]";
+    });
     return { value, redacted: kinds.length > 0, kinds };
   }
   var SEARCH_HOSTS = {
@@ -361,17 +359,33 @@
     backendUrl: DEFAULTS.backendUrl,
     appToken: DEFAULTS.appToken,
     denylist: [
+      // Financial, crypto, password-manager and auth domains. The narrowed
+      // redaction (card + SSN only) intentionally does NOT mask account/routing
+      // numbers or balances, so we don't capture these pages at all.
       "chase.com",
       "bankofamerica.com",
       "wellsfargo.com",
+      "citibank.com",
+      "capitalone.com",
+      "americanexpress.com",
+      "discover.com",
+      "usbank.com",
+      "schwab.com",
+      "fidelity.com",
+      "vanguard.com",
       "paypal.com",
+      "venmo.com",
+      "coinbase.com",
       "1password.com",
       "lastpass.com",
       "bitwarden.com",
-      "accounts.google.com"
+      "dashlane.com",
+      "accounts.google.com",
+      "login.microsoftonline.com"
     ],
     captureForms: true,
     captureSelections: true,
+    captureContent: true,
     backfillDays: 3
   };
   var writeChain = Promise.resolve();
@@ -393,6 +407,13 @@
     if (i >= 0) arr[i] = ev;
     else arr.push(ev);
     return arr;
+  }
+  function histId(url) {
+    const base = "hist:" + url;
+    if (base.length <= 128) return base;
+    let h = 0;
+    for (let i = 0; i < url.length; i++) h = Math.imul(31, h) + url.charCodeAt(i) | 0;
+    return base.slice(0, 118) + ":" + (h >>> 0).toString(36);
   }
   function postToCollector(cfg, ev) {
     if (cfg.backendUrl) {
@@ -426,11 +447,11 @@
     writeChain = writeChain.then(async () => {
       const cfg = await getCfg();
       if (cfg.paused) return;
+      postToCollector(cfg, ev);
       let arr = upsert(await getEvents(), ev);
       if (arr.length > MAX_EVENTS) arr = arr.slice(-MAX_EVENTS);
       await api.storage.local.set({ [STORE_KEY]: arr });
       await updateBadge(arr.length);
-      postToCollector(cfg, ev);
     }).catch(() => {
     });
     return writeChain;
@@ -485,24 +506,26 @@
         }
         if (isDeny(u.hostname)) continue;
         const loc = { href: it.url, hostname: u.hostname, pathname: u.pathname, search: u.search, hash: u.hash };
+        const cleanUrl = u.origin + u.pathname;
+        const title = redactString(it.title || "").value;
         const c = classify(loc);
         let ev;
         if (c.source === "search") {
           const s = extractSearch(loc, null);
           if (!s?.query) continue;
-          ev = makeEvent("search", { ts: it.lastVisitTime || Date.now(), url: it.url, domain: domainOf(it.url), title: it.title || null, source: "search", data: s, redacted: true });
+          ev = makeEvent("search", { ts: it.lastVisitTime || Date.now(), url: cleanUrl, domain: domainOf(it.url), title, source: "search", data: s, redacted: true });
         } else {
           const type = c.kind === "reading" ? "reading" : "pageview";
           ev = makeEvent(type, {
             ts: it.lastVisitTime || Date.now(),
-            url: it.url,
+            url: cleanUrl,
             domain: domainOf(it.url),
-            title: it.title || null,
+            title,
             source: c.source,
-            data: type === "reading" ? { title: it.title || null, tags: [], wordCount: 0 } : {}
+            data: type === "reading" ? { title, wordCount: 0 } : {}
           });
         }
-        ev.id = "hist:" + it.url;
+        ev.id = histId(cleanUrl);
         ev.backfill = true;
         await addEvent(ev);
       }

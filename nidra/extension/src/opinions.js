@@ -41,11 +41,10 @@ export function deriveOpinions(events = []) {
   const impressions = events.filter((e) => e.type === "impression");
   const actions = events.filter((e) => e.type === "action");
 
-  // ---- interests (weighted token frequency across tags/titles/queries) ----
+  // ---- interests (weighted token frequency across titles + search queries) ----
   const interest = new Map();
   const interestEvidence = new Map();
   for (const e of reading) {
-    for (const t of e.data?.tags || []) { bump(interest, t, 3); bump(interestEvidence, t); }
     for (const t of tokenize(e.data?.title)) { bump(interest, t, 1); }
   }
   for (const e of searches) {
@@ -92,7 +91,6 @@ export function deriveOpinions(events = []) {
   // ---- active projects: a topic seen across BOTH search AND reading ----
   const inReading = new Set();
   for (const e of reading) {
-    (e.data?.tags || []).forEach((t) => inReading.add(t));
     tokenize(e.data?.title).forEach((t) => inReading.add(t));
   }
   const inSearch = new Set();
@@ -123,7 +121,7 @@ export function deriveOpinions(events = []) {
       statement: `Actively interested in "${interests[0].topic}"`,
       confidence: conf(interests[0].evidence, 4),
       evidence: interests[0].evidence,
-      provenance: ["reading.tags", "search.query"],
+      provenance: ["reading.title", "search.query"],
     });
   }
   if (activeProjects[0]) {
@@ -179,9 +177,18 @@ export function deriveOpinions(events = []) {
   const byKey = new Map();
   for (const e of interactions) bump(byKey, e.data?.elementKey);
   const deliberation = [...byKey.values()].filter((n) => n > 1).length;
-  const reached = actions.filter((e) => /reached/.test(e.data?.milestone || "")).length;
-  const abandonedN = actions.filter((e) => e.data?.milestone === "abandoned").length;
-  const abandonmentRate = reached ? Math.round((abandonedN / reached) * 100) / 100 : abandonedN ? 1 : 0;
+  // Abandonment, re-derived from the step stream: a flow that was entered
+  // ("reached"/"advanced") but never "submitted". (The extension no longer emits
+  // an explicit "abandoned" milestone — it's inferred here and on the backend.)
+  const flowsEntered = new Set(
+    actions.filter((e) => /reached|advanced/.test(e.data?.milestone || "")).map((e) => e.data?.flow).filter(Boolean)
+  );
+  const flowsSubmitted = new Set(
+    actions.filter((e) => e.data?.milestone === "submitted").map((e) => e.data?.flow).filter(Boolean)
+  );
+  const reached = flowsEntered.size;
+  const abandonedN = [...flowsEntered].filter((f) => !flowsSubmitted.has(f)).length;
+  const abandonmentRate = reached ? Math.round((abandonedN / reached) * 100) / 100 : 0;
   const groupSet = new Set();
   for (const e of [...impressions, ...interactions]) if (e.data?.group) groupSet.add(e.data.group);
   const decisionStyle = {

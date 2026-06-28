@@ -16,5 +16,10 @@
     "esbuild": "^0.24.0",
     "jsdom": "^25.0.0",
     "playwright": "^1.49.0"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "defuddle": "^0.19.1",
+    "dom-to-semantic-markdown": "^1.5.0"
   }
 }

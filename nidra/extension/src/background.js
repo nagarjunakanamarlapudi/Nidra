@@ -3,7 +3,7 @@
 // browser history, and serves derived opinions to the popup.
 import { api } from "./browser-api.js";
 import { deriveOpinions } from "./opinions.js";
-import { classify, extractSearch, domainOf } from "./recognizers.js";
+import { classify, extractSearch, domainOf, redactString } from "./recognizers.js";
 import { makeEvent } from "./schema.js";
 import { DEFAULTS } from "./config.js";
 
@@ -21,11 +21,19 @@ const DEFAULT_CFG = {
   backendUrl: DEFAULTS.backendUrl,
   appToken: DEFAULTS.appToken,
   denylist: [
-    "chase.com", "bankofamerica.com", "wellsfargo.com", "paypal.com",
-    "1password.com", "lastpass.com", "bitwarden.com", "accounts.google.com",
+    // Financial, crypto, password-manager and auth domains. The narrowed
+    // redaction (card + SSN only) intentionally does NOT mask account/routing
+    // numbers or balances, so we don't capture these pages at all.
+    "chase.com", "bankofamerica.com", "wellsfargo.com", "citibank.com",
+    "capitalone.com", "americanexpress.com", "discover.com", "usbank.com",
+    "schwab.com", "fidelity.com", "vanguard.com",
+    "paypal.com", "venmo.com", "coinbase.com",
+    "1password.com", "lastpass.com", "bitwarden.com", "dashlane.com",
+    "accounts.google.com", "login.microsoftonline.com",
   ],
   captureForms: true,
   captureSelections: true,
+  captureContent: true,
   backfillDays: 3,
 };
 
@@ -50,6 +58,17 @@ function upsert(arr, ev) {
   if (i >= 0) arr[i] = ev;
   else arr.push(ev);
   return arr;
+}
+
+// Stable dedupe id for a backfilled history page, bounded to the backend's
+// client_id column (varchar 128). Scrubbed URLs are usually short; if one is
+// long, keep a readable prefix + a stable hash so it stays unique AND ≤128.
+function histId(url) {
+  const base = "hist:" + url;
+  if (base.length <= 128) return base;
+  let h = 0;
+  for (let i = 0; i < url.length; i++) h = (Math.imul(31, h) + url.charCodeAt(i)) | 0;
+  return base.slice(0, 118) + ":" + (h >>> 0).toString(36); // ≤ 118 + 1 + 7 = 126
 }
 
 function postToCollector(cfg, ev) {
@@ -85,11 +104,13 @@ function addEvent(ev) {
     .then(async () => {
       const cfg = await getCfg();
       if (cfg.paused) return;
+      // Ship to the backend first — fire-and-forget, so the network POST isn't
+      // gated on the (serialized) local-storage round-trip below.
+      postToCollector(cfg, ev);
       let arr = upsert(await getEvents(), ev);
       if (arr.length > MAX_EVENTS) arr = arr.slice(-MAX_EVENTS);
       await api.storage.local.set({ [STORE_KEY]: arr });
       await updateBadge(arr.length);
-      postToCollector(cfg, ev);
     })
     .catch(() => {});
   return writeChain;
@@ -144,20 +165,25 @@ async function backfill() {
       try { u = new URL(it.url); } catch { continue; }
       if (isDeny(u.hostname)) continue;
       const loc = { href: it.url, hostname: u.hostname, pathname: u.pathname, search: u.search, hash: u.hash };
+      // Strip query/fragment before STORING: history URLs can carry auth tokens
+      // (e.g. a login otpToken), which the live path's gate scrubs too. classify/
+      // extractSearch still get the full loc, so the search query is recoverable.
+      const cleanUrl = u.origin + u.pathname;
+      const title = redactString(it.title || "").value;
       const c = classify(loc);
       let ev;
       if (c.source === "search") {
         const s = extractSearch(loc, null);
         if (!s?.query) continue;
-        ev = makeEvent("search", { ts: it.lastVisitTime || Date.now(), url: it.url, domain: domainOf(it.url), title: it.title || null, source: "search", data: s, redacted: true });
+        ev = makeEvent("search", { ts: it.lastVisitTime || Date.now(), url: cleanUrl, domain: domainOf(it.url), title, source: "search", data: s, redacted: true });
       } else {
         const type = c.kind === "reading" ? "reading" : "pageview";
         ev = makeEvent(type, {
-          ts: it.lastVisitTime || Date.now(), url: it.url, domain: domainOf(it.url), title: it.title || null, source: c.source,
-          data: type === "reading" ? { title: it.title || null, tags: [], wordCount: 0 } : {},
+          ts: it.lastVisitTime || Date.now(), url: cleanUrl, domain: domainOf(it.url), title, source: c.source,
+          data: type === "reading" ? { title, wordCount: 0 } : {},
         });
       }
-      ev.id = "hist:" + it.url; // dedupe by URL across runs
+      ev.id = histId(cleanUrl); // dedupe by scrubbed URL across runs; bounded ≤128 (client_id column)
       ev.backfill = true;
       await addEvent(ev);
     }

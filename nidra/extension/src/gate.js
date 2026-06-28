@@ -34,7 +34,21 @@ function scrubUrl(url) {
 /** Gate one event. Returns the (possibly sanitized) event to send, or null to DROP. */
 export function gate(event) {
   if (!event) return null;
-  if (!DECISION_TYPES.has(event.type)) return event; // existing types: already-redacted passthrough
+
+  // Non-decision events (pageview/reading/search/email/calendar/form_input/
+  // selection): values are redacted upstream, but this is the single chokepoint,
+  // so scrub the envelope (url query/fragment can hold tokens) and re-redact any
+  // captured free-text `content` as a backstop.
+  if (!DECISION_TYPES.has(event.type)) {
+    const d = event.data || {};
+    const data = typeof d.content === "string" ? { ...d, content: redactString(d.content).value } : d;
+    return {
+      ...event,
+      url: scrubUrl(event.url),
+      title: redactString(event.title || "").value,
+      data,
+    };
+  }
 
   const d = event.data || {};
 

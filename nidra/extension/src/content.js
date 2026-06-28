@@ -2,24 +2,32 @@
 // Privacy-first: honors a pause flag + domain denylist, never reads sensitive
 // fields, and redacts PII before anything leaves the page.
 import { api } from "./browser-api.js";
+import { analyzePage } from "./analyze.js";
 import {
-  analyzePage,
   classify,
   describeImpression,
   describeInput,
   describeInteraction,
+  detectStep,
   isSensitiveInput,
   redactString,
 } from "./recognizers.js";
 import { gate } from "./gate.js";
 import { makeEvent } from "./schema.js";
 
+// Mirrors background.js DEFAULT_CFG.denylist — financial / crypto / password-
+// manager / auth domains we never capture (the card+SSN redaction won't mask
+// account numbers or balances, so we skip these pages entirely).
 const DEFAULT_DENYLIST = [
-  "chase.com", "bankofamerica.com", "wellsfargo.com", "paypal.com",
-  "1password.com", "lastpass.com", "bitwarden.com", "accounts.google.com",
+  "chase.com", "bankofamerica.com", "wellsfargo.com", "citibank.com",
+  "capitalone.com", "americanexpress.com", "discover.com", "usbank.com",
+  "schwab.com", "fidelity.com", "vanguard.com",
+  "paypal.com", "venmo.com", "coinbase.com",
+  "1password.com", "lastpass.com", "bitwarden.com", "dashlane.com",
+  "accounts.google.com", "login.microsoftonline.com",
 ];
 
-let cfg = { paused: false, denylist: DEFAULT_DENYLIST, captureForms: true, captureSelections: true };
+let cfg = { paused: false, denylist: DEFAULT_DENYLIST, captureForms: true, captureSelections: true, captureContent: true };
 let started = false;
 let pageStart = Date.now();
 let pageStartPerf = 0; // performance.now() baseline for decision latency
@@ -28,17 +36,27 @@ let currentPageId = null;
 
 // Decision capture state (reset per page load).
 const IMPRESSION_CAP = 40;
+const DWELL_MS = 400; // a control must stay in view this long to count as an impression
 let seenKeys = new Set();
 let recentInteractions = new Map(); // elementKey -> {action, t} — dedupe click+change double-fire
 let impressionCount = 0;
 let impressionObserver = null;
-let funnelReached = false;
-let submitted = false;
-const FUNNEL_RE = /checkout|cart|payment|booking|\breview\b|\border\b|subscribe/i;
+let dwellTimers = new Map(); // element -> pending dwell timeout (cleared if it scrolls away)
+
+// Journey: where this page-load came from (stitched across navigations via sessionStorage).
+let fromUrl = null;
+let fromPageId = null;
+let cachedPrimary = null; // { id, ev } — analyzePage result cached per page-load (avoid re-parse on flush)
 
 const host = () => location.hostname.replace(/^www\./, "");
 const denylisted = () => cfg.denylist.some((d) => host() === d || host().endsWith("." + d));
 const uuid = () => (crypto?.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.round(performance.now()));
+const stripQuery = (u) => { try { const x = new URL(u); return x.origin + x.pathname; } catch { return u || null; } };
+// sessionStorage is shared with the page, so journey values read back are UNTRUSTED
+// (a page could poison them). Accept only an http(s) URL (query-stripped, capped,
+// redacted) and a uuid-shaped id.
+const sanitizeUrl = (u) => (u && /^https?:\/\//i.test(u) ? redactString(stripQuery(u).slice(0, 300)).value : null);
+const sanitizeId = (id) => (/^[\w-]{1,64}$/.test(id || "") ? id : null);
 
 function scrollPct() {
   const h = document.documentElement;
@@ -61,8 +79,16 @@ function send(event) {
 
 function emitPrimary(reason) {
   if (cfg.paused || denylisted()) return;
-  const ev = analyzePage(document, location, { ts: Date.now() });
-  ev.id = currentPageId; // stable per page-load so load + flush upsert (no double count)
+  // analyzePage runs Readability (expensive), so compute once per page-load and
+  // reuse on flush (visibilitychange/pagehide), updating only the live metrics.
+  let ev = cachedPrimary && cachedPrimary.id === currentPageId ? cachedPrimary.ev : null;
+  if (!ev) {
+    ev = analyzePage(document, location, { ts: Date.now() });
+    ev.id = currentPageId; // stable per page-load so load + flush upsert (no double count)
+    ev.data = { ...(ev.data || {}), journey: { fromUrl, fromPageId } };
+    if (cfg.captureContent === false && ev.data) delete ev.data.content;
+    cachedPrimary = { id: currentPageId, ev };
+  }
   ev.metrics = {
     dwellMs: Date.now() - pageStart,
     scrollPct: Math.round(maxScrollPct * 100) / 100,
@@ -73,15 +99,30 @@ function emitPrimary(reason) {
 }
 
 function newPage() {
+  // Journey: "from" = whatever this tab recorded on its previous page-load
+  // (survives same-origin navigations via sessionStorage); referrer covers the
+  // cross-origin first hop.
+  try {
+    fromPageId = sanitizeId(sessionStorage.getItem("nidra:lastPageId"));
+    fromUrl = sanitizeUrl(sessionStorage.getItem("nidra:lastUrl")) || sanitizeUrl(document.referrer);
+  } catch {
+    fromPageId = null;
+    fromUrl = sanitizeUrl(document.referrer);
+  }
   currentPageId = uuid();
+  cachedPrimary = null;
   pageStart = Date.now();
   pageStartPerf = performance.now();
   maxScrollPct = 0;
   seenKeys = new Set();
   recentInteractions = new Map();
   impressionCount = 0;
-  funnelReached = false;
-  submitted = false;
+  dwellTimers.forEach((t) => clearTimeout(t));
+  dwellTimers.clear();
+  try {
+    sessionStorage.setItem("nidra:lastPageId", currentPageId);
+    sessionStorage.setItem("nidra:lastUrl", stripQuery(location.href) || location.href);
+  } catch { /* sessionStorage unavailable */ }
 }
 
 // --- decisions: interaction / impression / action ---
@@ -132,9 +173,19 @@ function armImpressions() {
     impressionObserver = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
-          if (!e.isIntersecting) continue;
-          onImpression(e.target);
-          impressionObserver.unobserve(e.target);
+          if (e.isIntersecting) {
+            if (dwellTimers.has(e.target)) continue; // dwell already counting down
+            const target = e.target;
+            const timer = setTimeout(() => {
+              dwellTimers.delete(target);
+              onImpression(target);
+              impressionObserver.unobserve(target);
+            }, DWELL_MS);
+            dwellTimers.set(target, timer);
+          } else {
+            const timer = dwellTimers.get(e.target); // scrolled away before the dwell elapsed
+            if (timer) { clearTimeout(timer); dwellTimers.delete(e.target); }
+          }
         }
       },
       { threshold: 0.5 }
@@ -147,31 +198,44 @@ function armImpressions() {
   }
 }
 
-function emitAction(milestone, extra = {}) {
+function emitAction(milestone, step = {}) {
   if (cfg.paused || denylisted()) return;
   const ev = makeEvent("action", {
     ts: Date.now(), url: location.href, domain: host(), title: document.title,
-    source: classify(location).source, data: { milestone, funnel: "checkout", ...extra },
+    source: classify(location).source,
+    data: {
+      milestone,
+      flow: step.flow || null,
+      stepLabel: step.label || null,
+      stepIndex: step.index ?? null,
+      of: step.of ?? null,
+    },
   });
   ev.id = uuid();
   ev.context_id = currentPageId;
   send(ev);
 }
 
-function maybeFunnel() {
-  if (!funnelReached && FUNNEL_RE.test(location.pathname + " " + location.href)) {
-    funnelReached = true;
-    emitAction("reached_checkout");
+// Generalized funnel: detect a step in ANY multi-step flow (checkout, signup,
+// wizard, …) and record flow entry ("reached") vs. progression ("advanced").
+// Flow continuity is tracked across page-loads via sessionStorage; the backend
+// can infer abandonment (a flow that was "reached" but never "submitted").
+function maybeStep() {
+  const step = detectStep(document, location);
+  if (!step) {
+    try { sessionStorage.removeItem("nidra:flow"); } catch { /* ignore */ }
+    return;
   }
+  let prevFlow = null;
+  try { prevFlow = sessionStorage.getItem("nidra:flow"); } catch { /* ignore */ }
+  try { sessionStorage.setItem("nidra:flow", step.flow || "flow"); } catch { /* ignore */ }
+  emitAction(prevFlow && prevFlow === step.flow ? "advanced" : "reached", step);
 }
 
 // --- behavior listeners ---
 addEventListener("scroll", () => { maxScrollPct = Math.max(maxScrollPct, scrollPct()); }, { passive: true });
 addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") emitPrimary("flush"); });
-addEventListener("pagehide", () => {
-  emitPrimary("flush");
-  if (funnelReached && !submitted) emitAction("abandoned"); // left a flow without finishing
-});
+addEventListener("pagehide", () => emitPrimary("flush"));
 
 // Interaction capture: semantic clicks/toggles/selects, routed through the gate.
 addEventListener("click", (e) => onInteraction(e.target), true);
@@ -195,8 +259,8 @@ addEventListener(
         send(ev);
       }
     }
-    submitted = true;
-    emitAction("submitted"); // reached the end of a flow
+    const step = detectStep(document, location);
+    if (step) emitAction("submitted", step); // reached the end of a flow (only inside a detected flow)
   },
   true
 );
@@ -224,7 +288,7 @@ function onRoute() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
   newPage();
-  setTimeout(() => { emitPrimary("spa"); maybeFunnel(); armImpressions(); }, 800);
+  setTimeout(() => { emitPrimary("spa"); maybeStep(); armImpressions(); }, 800);
 }
 function watchSpa() {
   addEventListener("hashchange", onRoute);
@@ -247,7 +311,7 @@ async function init() {
   } catch {}
   if (denylisted()) return;
   newPage();
-  setTimeout(() => { emitPrimary("load"); maybeFunnel(); armImpressions(); }, 600); // let content settle
+  setTimeout(() => { emitPrimary("load"); maybeStep(); armImpressions(); }, 600); // let content settle
   watchSpa();
 }
 init();

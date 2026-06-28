@@ -2,7 +2,7 @@
 // Pure functions — they take an explicit `doc` and `loc` so they run identically
 // in the content script (real DOM) and in tests (jsdom). No browser globals.
 
-import { makeEvent, SOURCES } from "./schema.js";
+import { SOURCES } from "./schema.js";
 
 // ----------------------------- helpers -----------------------------
 
@@ -14,71 +14,48 @@ export function domainOf(href) {
   }
 }
 
-function metaContent(doc, selector, attr = "content") {
-  const el = doc.querySelector(selector);
-  return el ? (el.getAttribute(attr) || "").trim() || null : null;
-}
-
-function parseJsonLd(doc) {
-  const out = [];
-  for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
-    try {
-      const parsed = JSON.parse(s.textContent);
-      if (Array.isArray(parsed)) out.push(...parsed);
-      else if (parsed && Array.isArray(parsed["@graph"])) out.push(...parsed["@graph"]);
-      else if (parsed) out.push(parsed);
-    } catch {
-      /* ignore malformed ld+json */
-    }
-  }
-  return out;
-}
-
 export function wordCount(text) {
   if (!text) return 0;
   const t = text.replace(/\s+/g, " ").trim();
   return t ? t.split(" ").length : 0;
 }
 
-function visibleText(doc) {
-  const root =
-    doc.querySelector("article") ||
-    doc.querySelector("main") ||
-    doc.querySelector('[role="main"]') ||
-    doc.body;
-  if (!root) return "";
-  const clone = root.cloneNode(true);
-  for (const el of clone.querySelectorAll("script,style,noscript,nav,header,footer,aside,form"))
-    el.remove();
-  return clone.textContent || "";
-}
-
 // ----------------------------- redaction -----------------------------
 
-const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const CARD_RE = /\b(?:\d[ -]?){13,19}\b/g; // credit-card-ish runs
-const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
-// Phone with separators, e.g. (415) 555-1234 / 415-555-1234 / 415.555.1234.
-const PHONE_RE = /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g;
-// A full date (with year) — DOB-ish: 03/14/1990, 14-03-90.
-const DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g;
-const LONG_NUM_RE = /\b\d{9,}\b/g; // account/long-id-ish
+const CARD_RE = /\b(?:\d[ -]?){13,19}\b/g; // credit-card-ish digit runs (Luhn-checked below)
+const SSN_RE = /\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/g; // dashed, spaced, or bare 9-digit
 
-/** Mask PII inside a free-text string. Returns {value, redacted, kinds}. */
+/** Luhn checksum — only treat a digit run as a card if it actually validates,
+ *  so we don't mask phone numbers, order ids, dates, etc. */
+function luhnValid(s) {
+  const digits = s.replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48;
+    if (alt) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+/** Mask ONLY highly sensitive data — payment cards (Luhn-validated) and SSNs.
+ *  Names, emails, phone numbers and addresses are intentionally KEPT: they are
+ *  useful signal for the assistant. Returns {value, redacted, kinds}. */
 export function redactString(input) {
   if (typeof input !== "string" || !input) return { value: input ?? null, redacted: false, kinds: [] };
   const kinds = [];
-  let value = input;
-  // Order matters: email/card/ssn/phone/date before the generic long-number catch.
-  if (EMAIL_RE.test(value)) { kinds.push("email"); value = value.replace(EMAIL_RE, "[email]"); }
-  if (CARD_RE.test(value)) { kinds.push("card"); value = value.replace(CARD_RE, "[card]"); }
-  if (SSN_RE.test(value)) { kinds.push("ssn"); value = value.replace(SSN_RE, "[ssn]"); }
-  if (PHONE_RE.test(value)) { kinds.push("phone"); value = value.replace(PHONE_RE, "[phone]"); }
-  if (DATE_RE.test(value)) { kinds.push("date"); value = value.replace(DATE_RE, "[date]"); }
-  if (LONG_NUM_RE.test(value)) { kinds.push("number"); value = value.replace(LONG_NUM_RE, "[number]"); }
-  // reset lastIndex on the global regexes we .test()ed above
-  EMAIL_RE.lastIndex = CARD_RE.lastIndex = SSN_RE.lastIndex = 0;
-  PHONE_RE.lastIndex = DATE_RE.lastIndex = LONG_NUM_RE.lastIndex = 0;
+  let value = input.replace(CARD_RE, (m) => {
+    if (!luhnValid(m)) return m;
+    if (!kinds.includes("card")) kinds.push("card");
+    return "[card]";
+  });
+  value = value.replace(SSN_RE, () => {
+    if (!kinds.includes("ssn")) kinds.push("ssn");
+    return "[ssn]";
+  });
   return { value, redacted: kinds.length > 0, kinds };
 }
 
@@ -286,63 +263,6 @@ export function extractSearch(loc, doc) {
   return { engine: c.engine, query: value };
 }
 
-// ----------------------------- article / reading -----------------------------
-
-export function extractArticle(doc) {
-  const ld = parseJsonLd(doc);
-  const ldArticle = ld.find((x) => {
-    const t = x && x["@type"];
-    const types = Array.isArray(t) ? t : [t];
-    return types.some((tt) => /Article|BlogPosting|NewsArticle|Report/i.test(String(tt || "")));
-  });
-
-  const ogType = metaContent(doc, 'meta[property="og:type"]');
-  const text = visibleText(doc);
-  const words = wordCount(text);
-  const hasArticleEl = !!doc.querySelector("article");
-  const isArticle = Boolean(ldArticle) || /article/i.test(ogType || "") || hasArticleEl || words > 400;
-
-  if (!isArticle) return { isArticle: false, wordCount: words };
-
-  const title =
-    metaContent(doc, 'meta[property="og:title"]') ||
-    (ldArticle && (ldArticle.headline || ldArticle.name)) ||
-    doc.querySelector("h1")?.textContent?.trim() ||
-    (doc.title || "").trim() ||
-    null;
-
-  let author =
-    metaContent(doc, 'meta[name="author"]') ||
-    doc.querySelector('[rel="author"], a[data-testid="authorName"], .author')?.textContent?.trim() ||
-    null;
-  if (!author && ldArticle && ldArticle.author) {
-    const a = ldArticle.author;
-    author = Array.isArray(a) ? a.map((x) => x.name || x).join(", ") : a.name || a;
-  }
-
-  const tags = new Set();
-  const kw = metaContent(doc, 'meta[name="keywords"]');
-  if (kw) kw.split(",").forEach((t) => t.trim() && tags.add(t.trim().toLowerCase()));
-  for (const m of doc.querySelectorAll('meta[property="article:tag"]')) {
-    const v = (m.getAttribute("content") || "").trim();
-    if (v) tags.add(v.toLowerCase());
-  }
-  if (ldArticle && ldArticle.keywords) {
-    const ks = Array.isArray(ldArticle.keywords) ? ldArticle.keywords : String(ldArticle.keywords).split(",");
-    ks.forEach((t) => String(t).trim() && tags.add(String(t).trim().toLowerCase()));
-  }
-
-  return {
-    isArticle: true,
-    title: title || null,
-    author: author || null,
-    siteName: metaContent(doc, 'meta[property="og:site_name"]'),
-    tags: [...tags].slice(0, 12),
-    wordCount: words,
-    estReadMin: Math.max(1, Math.round(words / 200)),
-  };
-}
-
 // ----------------------------- email (gmail) -----------------------------
 
 export function extractEmail(doc, loc) {
@@ -389,38 +309,54 @@ export function extractCalendar(doc, loc) {
   return { view, action: creating ? "create" : "view", eventTitle, eventTime };
 }
 
-// ----------------------------- top-level -----------------------------
+// ----------------------------- flow steps -----------------------------
 
-/**
- * Analyze the current page into ONE primary event describing what it is.
- * The content script enriches the returned event with behavior metrics
- * (dwell, scroll) and emits separate search/form/selection events live.
- */
-export function analyzePage(doc, loc, { ts } = {}) {
-  const { source } = classify(loc);
-  const base = {
-    ts,
-    url: loc.href,
-    domain: domainOf(loc.href),
-    title: (doc.title || "").trim() || null,
-    source,
+const FLOW_RE =
+  /checkout|cart|payment|sign[\s-]?up|register|onboard|wizard|booking|apply|application|survey|quiz|subscribe|\border\b/i;
+
+/** Detect whether the page is a step in a multi-step flow (checkout, signup,
+ *  wizard, …). Returns { flow, label, index, of } or null. Heuristic + best-effort. */
+export function detectStep(doc, loc) {
+  // Match the flow keyword against the PATH only — a querystring (?order=…) or a
+  // subdomain (cart.example.com) shouldn't trip it.
+  const path = (loc && loc.pathname) || "";
+  const flowMatch = FLOW_RE.exec(path);
+
+  // Explicit "Step 2 of 4" text, scoped to a step-ish container when present.
+  let index = null;
+  let of = null;
+  const scope = doc.querySelector('[class*="step" i], [data-step], [role="progressbar"], nav[aria-label*="step" i]');
+  const probe = ((scope && scope.textContent) || (doc.body && doc.body.textContent) || "").slice(0, 4000);
+  const m = probe.match(/step\s*(\d+)\s*(?:of|\/)\s*(\d+)/i);
+  if (m) { index = Number(m[1]); of = Number(m[2]); }
+
+  // A progressbar's aria-valuenow/max — only when it looks like a small step
+  // count, not an 0–100 percentage.
+  const pb = doc.querySelector('[role="progressbar"]');
+  if (pb && index == null) {
+    const now = Number(pb.getAttribute("aria-valuenow"));
+    const max = Number(pb.getAttribute("aria-valuemax"));
+    if (now && max && max <= 12) { index = now; of = max; }
+  }
+
+  const current = doc.querySelector('[aria-current="step"]');
+  if (!flowMatch && index == null && !current) return null;
+
+  // `flow` is the STABLE flow identity (so maybeStep can tell "entered" from
+  // "advanced" across steps) — prefer the path keyword; the per-step text lives
+  // in `label`.
+  const crumb = doc.querySelector('nav[aria-label*="breadcrumb" i]');
+  const flowRaw =
+    (flowMatch && flowMatch[0]) ||
+    (crumb && crumb.textContent) ||
+    (doc.querySelector("h1") && doc.querySelector("h1").textContent) ||
+    "flow";
+  const labelEl = current || doc.querySelector("h1, h2");
+  return {
+    flow: redactString(String(flowRaw).toLowerCase().replace(/\s+/g, " ").trim().slice(0, 60)).value,
+    label: labelEl ? redactString((labelEl.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80)).value : null,
+    index,
+    of,
   };
-
-  if (source === SOURCES.SEARCH) {
-    const s = extractSearch(loc, doc);
-    if (s) return makeEvent("search", { ...base, data: s, redacted: true });
-  }
-  if (source === SOURCES.GMAIL) {
-    const e = extractEmail(doc, loc);
-    if (e) return makeEvent("email", { ...base, data: e, redacted: true });
-  }
-  if (source === SOURCES.GCAL) {
-    const cal = extractCalendar(doc, loc);
-    if (cal) return makeEvent("calendar", { ...base, data: cal, redacted: true });
-  }
-
-  const art = extractArticle(doc);
-  if (art.isArticle) return makeEvent("reading", { ...base, data: art });
-
-  return makeEvent("pageview", { ...base, data: { wordCount: art.wordCount } });
 }
+

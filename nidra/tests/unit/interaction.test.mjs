@@ -17,6 +17,12 @@ test("EVENT_TYPES includes the new decision types", () => {
   }
 });
 
+test("makeEvent coerces a fractional ts to an integer (history lastVisitTime is a double; backend types ts as int)", () => {
+  const ev = makeEvent("pageview", { ts: 1719500000000.5 });
+  assert.equal(Number.isInteger(ev.ts), true);
+  assert.equal(ev.ts, 1719500000001);
+});
+
 // ---- describeInteraction ----
 test("describeInteraction maps a toggle to a semantic descriptor", () => {
   const doc = page(
@@ -57,10 +63,11 @@ test("elementKey is stable across re-render/position and bounded", () => {
   assert.ok(k1.length <= 64);
 });
 
-// ---- strengthened redaction ----
-test("redactString masks phone and date-of-birth shapes", () => {
-  assert.match(R.redactString("call (415) 555-1234").value, /\[phone\]/);
-  assert.match(R.redactString("dob 03/14/1990").value, /\[date\]/);
+// ---- narrowed redaction (cards + SSNs only; contact details kept) ----
+test("redactString keeps phone/DOB, masks only cards + SSNs", () => {
+  assert.equal(R.redactString("call (415) 555-1234").redacted, false); // phone kept
+  assert.equal(R.redactString("dob 03/14/1990").redacted, false); // date kept
+  assert.match(R.redactString("card 4111 1111 1111 1111").value, /\[card\]/);
   assert.equal(R.redactString("nothing here").redacted, false); // no false positives
 });
 
@@ -93,15 +100,17 @@ test("gate DROPs unknown controls and password/credential sections", () => {
   );
 });
 
-test("gate scrubs the envelope: strips url query and redacts the title", () => {
+test("gate scrubs the envelope: strips url query, masks a card in the title, keeps email", () => {
   const ev = gate(
     makeEvent("interaction", {
       url: "https://shop.com/checkout?token=secret123&ref=abc",
-      title: "Order for bob@corp.com",
+      title: "Order for bob@corp.com — card 4111 1111 1111 1111",
       data: { control: "toggle", group: "Add-ons", label: "Toll pass", value: "on", valueClass: "boolean" },
     })
   );
   assert.ok(ev, "safe add-on toggle should pass");
   assert.ok(!/token=secret123/.test(ev.url), "query string must be stripped");
-  assert.match(ev.title, /\[email\]/);
+  assert.match(ev.title, /\[card\]/, "card masked in the title");
+  assert.doesNotMatch(ev.title, /4111/);
+  assert.match(ev.title, /bob@corp\.com/, "email kept (useful signal)");
 });

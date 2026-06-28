@@ -10,17 +10,17 @@ function sampleEvents() {
   return [
     makeEvent("reading", {
       ts: T(9), source: "medium", url: "https://medium.com/@jane/raft",
-      data: { title: "Understanding Raft Consensus", author: "Jane Doe", tags: ["raft", "consensus", "distributed systems"], wordCount: 2200 },
+      data: { title: "Understanding Raft Consensus", author: "Jane Doe", wordCount: 2200 },
       metrics: { readPct: 0.9 },
     }),
     makeEvent("reading", {
       ts: T(9), source: "arxiv", url: "https://arxiv.org/abs/1404.5326",
-      data: { title: "In Search of an Understandable Consensus Algorithm", author: "Diego Ongaro", tags: ["consensus", "raft"], wordCount: 8000 },
+      data: { title: "In Search of an Understandable Consensus Algorithm", author: "Diego Ongaro", wordCount: 8000 },
       metrics: { readPct: 0.4 },
     }),
     makeEvent("reading", {
       ts: T(10), source: "medium", url: "https://medium.com/@jane/paxos",
-      data: { title: "Paxos Made Simple", author: "Jane Doe", tags: ["paxos", "consensus"], wordCount: 1500 },
+      data: { title: "Paxos Made Simple", author: "Jane Doe", wordCount: 1500 },
       metrics: { readPct: 0.7 },
     }),
     makeEvent("search", { ts: T(9), source: "search", data: { engine: "google", query: "raft consensus algorithm" } }),
@@ -30,13 +30,14 @@ function sampleEvents() {
   ];
 }
 
-test("derives interests weighted by tags + queries", () => {
+test("derives interests weighted by titles + queries", () => {
   const o = deriveOpinions(sampleEvents());
   assert.equal(o.generatedFrom, 7);
   const topics = o.interests.map((i) => i.topic);
   assert.ok(topics.includes("consensus"));
   assert.ok(topics.includes("raft"));
-  assert.equal(o.interests[0].topic, "consensus"); // highest weight across reading+search
+  // "raft" appears in a title + both queries (queries weigh 2×) → highest score
+  assert.equal(o.interests[0].topic, "raft");
 });
 
 test("reading taste: long-form + primary sources + top author", () => {

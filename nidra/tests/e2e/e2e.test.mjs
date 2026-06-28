@@ -70,6 +70,7 @@ test("e2e: captures activity across sites and forms opinions", { timeout: 120000
 
     await visit("https://www.google.com/search?q=raft+consensus+algorithm");
     await visit("https://medium.com/@jane/understanding-raft-consensus-abc123");
+    await visit("https://medium.com/@jane/another-raft-post-def456"); // same origin → journey stitches via sessionStorage
     await visit("https://arxiv.org/abs/1404.5326");
     await visit("https://mail.google.com/mail/u/0/#inbox/t-2291");
     await visit("https://calendar.google.com/calendar/u/0/r/week");
@@ -99,10 +100,25 @@ test("e2e: captures activity across sites and forms opinions", { timeout: 120000
     assert.ok(reading.some((e) => e.source === "medium"), "medium classified");
     assert.ok(reading.some((e) => (e.data?.wordCount || 0) > 400), "article word count captured");
 
-    // --- privacy: gmail subject has the address redacted ---
+    // --- real page content captured (redacted + capped), via @mozilla/readability ---
+    const withContent = reading.find((e) => typeof e.data?.content === "string" && e.data.content.length > 50);
+    assert.ok(withContent, "reading captured the page's readable text");
+    assert.ok(withContent.data.content.length <= 4000, "content is length-capped");
+    assert.match(withContent.data.content, /consensus/i, "content is the real article body");
+
+    // --- page-to-page journey stitched within an origin (sessionStorage) ---
+    assert.ok(
+      reading.some((e) => /understanding-raft-consensus/.test(e.data?.journey?.fromUrl || "")),
+      "second same-origin page records where it came from"
+    );
+
+    // --- privacy (narrowed): contact details are KEPT as useful signal; only
+    //     cards + SSNs are ever masked. The gmail subject keeps the address. ---
     const email = events.find((e) => e.type === "email");
-    assert.match(email.data.subject, /\[email\]/, "email address redacted in subject");
-    assert.doesNotMatch(JSON.stringify(events), /alice@corp\.com/, "no raw addresses anywhere");
+    assert.match(email.data.subject, /Q3 planning/, "gmail subject captured");
+    assert.match(email.data.subject, /alice@corp\.com/, "email address kept (signal, not masked)");
+    assert.doesNotMatch(JSON.stringify(events), /\b4111\b/, "no card digits leak anywhere");
+    assert.doesNotMatch(JSON.stringify(events), /\b\d{3}-\d{2}-\d{4}\b/, "no SSNs leak anywhere");
 
     const calendar = events.find((e) => e.type === "calendar");
     assert.equal(calendar.data.eventTitle, "Design review with team");

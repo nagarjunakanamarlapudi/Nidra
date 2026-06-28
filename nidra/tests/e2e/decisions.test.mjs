@@ -61,7 +61,7 @@ test("e2e: decision capture + privacy gate in a real browser", { timeout: 120000
     await page.click('input[value="saved"]'); // a saved-card INSTRUMENT — must be dropped
     await page.fill('input[name="cardNumber"]', "4111 1111 1111 1111"); // sensitive — never captured
     await page.waitForTimeout(500);
-    await page.goto("about:blank"); // flush (also triggers abandon, since not submitted)
+    await page.goto("about:blank"); // flush (no submit → backend infers abandonment)
     await page.waitForTimeout(800);
 
     let state;

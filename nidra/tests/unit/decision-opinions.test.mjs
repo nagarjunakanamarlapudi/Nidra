@@ -18,8 +18,10 @@ test("deriveOpinions surfaces decision style from interactions/actions", () => {
       data: { action: "choose", control: "radio", label: "Apple Pay", group: "Payment methods", elementKey: "radio:b" },
       metrics: { latencyMs: 800 },
     }),
-    makeEvent("action", { data: { milestone: "reached_checkout", funnel: "checkout" } }),
-    makeEvent("action", { data: { milestone: "abandoned", funnel: "checkout" } }),
+    // Entered a "checkout" flow and advanced a step, but never "submitted" →
+    // abandonment is re-derived from the step stream (flow entered, not submitted).
+    makeEvent("action", { data: { milestone: "reached", flow: "checkout", stepLabel: "Cart" } }),
+    makeEvent("action", { data: { milestone: "advanced", flow: "checkout", stepLabel: "Shipping" } }),
   ];
   const o = deriveOpinions(evs);
 
@@ -29,7 +31,7 @@ test("deriveOpinions surfaces decision style from interactions/actions", () => {
   assert.equal(o.decisionStyle.interactions, 3);
   assert.equal(typeof o.decisionStyle.decisiveness, "number");
   assert.ok(o.decisionStyle.deliberation >= 1, "detected a reversal on the same control");
-  assert.ok(o.decisionStyle.abandonmentRate > 0, "detected an abandonment");
+  assert.ok(o.decisionStyle.abandonmentRate > 0, "inferred an abandoned flow (entered, never submitted)");
   // a decision-style belief is formed
   assert.ok(o.beliefs.some((b) => /decisi|deliberat|abandon/i.test(b.statement)));
 });

@@ -13,7 +13,7 @@ export const EVENT_TYPES = Object.freeze([
   "selection", // selected / highlighted text
   "impression", // a decision-point (choice elements / offers / CTAs) was shown
   "interaction", // a semantic click / toggle / select — the decision, never the raw value
-  "action", // a funnel milestone (reached_checkout / submitted / completed / abandoned)
+  "action", // a flow milestone (reached / advanced / submitted) in a multi-step flow
 ]);
 
 export const SOURCES = Object.freeze({
@@ -34,7 +34,10 @@ export function makeEvent(type, fields = {}) {
   return {
     v: SCHEMA_VERSION,
     type,
-    ts: fields.ts ?? Date.now(),
+    // Integer epoch-ms. chrome.history's lastVisitTime is a double (fractional
+    // ms), and the backend ingest model types ts as an int — a fractional ts is
+    // rejected (422). Round here so every producer (live + history backfill) is safe.
+    ts: Math.round(fields.ts ?? Date.now()),
     url: fields.url ?? null,
     domain: fields.domain ?? null,
     title: fields.title ?? null,
