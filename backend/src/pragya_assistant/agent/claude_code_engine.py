@@ -18,6 +18,14 @@ Tool access is confined by four layers, because ``allowed_tools`` alone only
 * ``can_use_tool`` is a deny-by-default backstop: it allows only our MCP tools
   and the enabled ``builtin_tools`` and denies everything else.
 
+On top of those, a ``PreToolUse`` hook guards *egress*: WebFetch stays available
+(chat needs lookups), so the hook runs every WebFetch URL through
+:func:`egress_allowed` and denies the call when the URL carries secret-shaped
+data or a bulk encoded blob (data exfiltration). A hook -- not ``can_use_tool``
+-- is required: ``can_use_tool`` only fires on "ask", so an auto-approved
+WebFetch would bypass it, whereas a ``PreToolUse`` hook fires before *every*
+tool call.
+
 ``setting_sources=[]`` keeps behaviour driven by our own system prompt, not the
 host's Claude config. The query function is injectable so tests need no real
 Claude Code or auth.
@@ -25,12 +33,15 @@ Claude Code or auth.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
 import structlog
 from claude_agent_sdk import (
     ClaudeAgentOptions,
+    HookContext,
+    HookJSONOutput,
+    HookMatcher,
     PermissionResultAllow,
     PermissionResultDeny,
     ToolPermissionContext,
@@ -39,6 +50,7 @@ from claude_agent_sdk import (
     tool,
 )
 
+from pragya_assistant.agent.egress import egress_allowed
 from pragya_assistant.agent.tools import Tool
 from pragya_assistant.llm.types import Effort, Message
 
@@ -123,9 +135,7 @@ class ClaudeCodeEngine:
             # built-ins are ever allowed.
             if name in allowed_set:
                 return PermissionResultAllow()
-            return PermissionResultDeny(
-                message=f"tool {name!r} is not permitted", interrupt=True
-            )
+            return PermissionResultDeny(message=f"tool {name!r} is not permitted", interrupt=True)
 
         return ClaudeAgentOptions(
             system_prompt=self._system_prompt,
@@ -135,6 +145,9 @@ class ClaudeCodeEngine:
             disallowed_tools=list(_DANGEROUS_BUILTINS),
             permission_mode="dontAsk",  # deny anything not pre-approved (no blanket bypass)
             can_use_tool=_can_use_tool,  # deny-by-default backstop
+            hooks={  # egress guard: runs on EVERY WebFetch (auto-approved or not)
+                "PreToolUse": [HookMatcher(matcher="WebFetch", hooks=[_egress_hook])]
+            },
             setting_sources=[],
             max_turns=self._max_turns,
             model=self._model,
@@ -147,6 +160,33 @@ class ClaudeCodeEngine:
         lines = [f"{_ROLE_LABELS.get(m.role, m.role)}: {m.content}" for m in history]
         lines.append(f"User: {user_text}")
         return "\n".join(lines)
+
+
+async def _egress_hook(
+    input_data: Mapping[str, Any],
+    _tool_use_id: str | None,
+    _context: HookContext,
+) -> HookJSONOutput:
+    """PreToolUse hook: deny a WebFetch whose URL fails the egress guard.
+
+    Fires before every tool call (unlike ``can_use_tool``, which only runs on
+    "ask"), so an auto-approved WebFetch is still checked. Returns ``{}`` (no
+    decision -> proceed) for everything else, including non-WebFetch calls that
+    happen to reach it and any call without a string ``url``."""
+    tool_input = input_data.get("tool_input") or {}
+    url = tool_input.get("url")
+    if isinstance(url, str):
+        allowed, reason = egress_allowed(url)
+        if not allowed:
+            log.warning("egress_blocked", url=url, reason=reason)
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": f"egress blocked: {reason}",
+                }
+            }
+    return {}
 
 
 def _to_sdk_tool(t: Tool) -> Any:
