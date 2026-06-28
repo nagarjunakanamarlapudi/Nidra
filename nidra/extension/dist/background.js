@@ -340,7 +340,7 @@
 
   // extension/src/config.js
   var DEFAULTS = {
-    backendUrl: true ? "http://localhost:8088" : "http://localhost:8088",
+    backendUrl: true ? "https://api.134-199-180-135.sslip.io" : "http://localhost:8088",
     appToken: true ? "dev-token" : "dev-token"
   };
 
