@@ -49,14 +49,15 @@ class GoogleCalendarConnector:
         if not accounts:
             raise RuntimeError("google_calendar requires an OAuth access token")
         calendar_id = ctx.config.get("calendar_id") or "primary"
-        days = int(ctx.config.get("sync_days_ahead") or 30)
+        days_ahead = int(ctx.config.get("sync_days_ahead") or 30)
+        days_back = int(ctx.config.get("sync_days_back") or 90)
         now = self._now()
         total = 0
         for label, get_token in accounts:
             events = await self._client.list_events(
                 await get_token(),
-                time_min=now - dt.timedelta(days=1),
-                time_max=now + dt.timedelta(days=days),
+                time_min=now - dt.timedelta(days=days_back),
+                time_max=now + dt.timedelta(days=days_ahead),
                 calendar_id=calendar_id,
             )
             await self._store.replace_for(ctx.key, events, account_label=label)

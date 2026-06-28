@@ -49,6 +49,32 @@ async def test_sync_ingests_events(session_factory: async_sessionmaker[AsyncSess
     assert await CalendarEventStore(session_factory).count("google_calendar") == 1
 
 
+async def test_sync_uses_backward_window(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """sync queries [now - sync_days_back (default 90), now + sync_days_ahead]."""
+    captured: dict[str, dt.datetime] = {}
+
+    class _Client:
+        async def list_events(
+            self,
+            access_token: str,
+            *,
+            time_min: dt.datetime,
+            time_max: dt.datetime,
+            calendar_id: str = "primary",
+        ) -> list:
+            captured["time_min"] = time_min
+            captured["time_max"] = time_max
+            return []
+
+    fixed_now = dt.datetime(2026, 6, 24, 8, 0)
+    conn = GoogleCalendarConnector(session_factory, client=_Client(), now=lambda: fixed_now)
+    await conn.sync(_ctx())
+    assert captured["time_min"] == fixed_now - dt.timedelta(days=90)
+    assert captured["time_max"] == fixed_now + dt.timedelta(days=30)
+
+
 @respx.mock
 async def test_test_connection_ok(session_factory: async_sessionmaker[AsyncSession]) -> None:
     respx.get(EVENTS_URL).mock(return_value=httpx.Response(200, json={"items": []}))
