@@ -142,6 +142,10 @@ def build_test_app(engine: AsyncEngine) -> AppBuilder:
             digest_enabled=False,
         )
         agent = LoopEngine(provider=provider, registry=ToolRegistry([]), system_prompt="SYS")
+        # Background jobs (digest, dreamer) run on a CONFINED engine — a separate
+        # brain with no tools/web, never the chat agent. In tests it shares the
+        # scripted provider but is a distinct instance, mirroring production.
+        confined = LoopEngine(provider=provider, registry=ToolRegistry([]), system_prompt="SYS")
         session_factory = create_session_factory(engine)
         components = AppComponents(
             settings=settings,
@@ -149,7 +153,7 @@ def build_test_app(engine: AsyncEngine) -> AppBuilder:
             agent=agent,
             conversations=ConversationStore(session_factory),
             digests=DigestService(
-                engine=agent,
+                engine=confined,
                 store=DigestStore(session_factory),
                 telegram=telegram,
                 allowed_chat_ids=allowed_chat_ids or [],

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from pragya_assistant.agent.completion import engine_completion_fn, ollama_completion_fn
 from pragya_assistant.agent.engine import AgentEngine
+from pragya_assistant.agent.factory import build_confined_completion_fn
 from pragya_assistant.api.auth import require_token
 from pragya_assistant.api.deps import get_agent, get_session_factory, get_settings_dep
 from pragya_assistant.config import Settings
@@ -110,19 +111,19 @@ async def refresh_opinions(
 
 
 @router.post("/dreams/run")
-async def run_dreams(
-    settings: AppSettings, session_factory: SessionFactory, agent: Agent
-) -> dict[str, Any]:
-    """Dream on top of the current Opinions and write the dreams store. Uses the
-    configured agent brain (claude-code by default); falls back to on-device
-    Ollama only when AGENT_ENGINE=ollama. Invoked manually and nightly by cron."""
+async def run_dreams(settings: AppSettings, session_factory: SessionFactory) -> dict[str, Any]:
+    """Dream on top of the current Opinions and write the dreams store. Runs on a
+    CONFINED engine (no tools, no web, no file/bash) built for this background job
+    — never the web-enabled chat engine — so ingested data can't drive tool use or
+    exfiltrate. Falls back to on-device Ollama only when AGENT_ENGINE=ollama (also
+    confined/no-tools). Invoked manually and nightly by cron."""
     model = UserModelStore(session_factory)
     dreams = DreamStore(session_factory)
     if settings.agent_engine == "ollama":
         complete = ollama_completion_fn(settings.ollama_base_url, settings.dream_model)
         engine_label = f"ollama:{settings.dream_model}"
     else:
-        complete = engine_completion_fn(agent)
+        complete = build_confined_completion_fn(settings)
         engine_label = settings.agent_engine
     dreamer = DreamerService(model, dreams, complete, engine_label=engine_label)
     try:

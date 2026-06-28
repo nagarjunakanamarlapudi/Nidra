@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from pragya_assistant.agent.engine import AgentEngine
-from pragya_assistant.agent.factory import build_engine
+from pragya_assistant.agent.factory import build_confined_engine, build_engine
 from pragya_assistant.agent.tools import Tool
 from pragya_assistant.calendars.service import CalendarService
 from pragya_assistant.channels.telegram.client import TelegramClient
@@ -76,12 +76,19 @@ def build_components(settings: Settings) -> AppComponents:
     email_service = build_email_service(settings)
     finance = build_finance_service(settings, session_factory)
     agent = build_engine(
-        settings, memory, task_store, calendar_service, email_service,
+        settings,
+        memory,
+        task_store,
+        calendar_service,
+        email_service,
         session_factory=session_factory,
     )
     telegram = TelegramClient(settings.telegram_bot_token) if settings.telegram_bot_token else None
+    # The digest is a background job: run it on a CONFINED engine (no tools, no
+    # web, no file/bash) so it never inherits chat's WebFetch — even though chat's
+    # tools get re-wired as connectors change, the digest stays confined.
     digests = DigestService(
-        engine=agent,
+        engine=build_confined_engine(settings),
         store=DigestStore(session_factory),
         telegram=telegram,
         allowed_chat_ids=settings.telegram_allowed_chat_ids,
@@ -116,9 +123,7 @@ def build_components(settings: Settings) -> AppComponents:
     )
     instance_store = ConnectorInstanceStore(session_factory, settings.app_secret_key)
 
-    def _rebuild_engine(
-        connector_tools: list[Tool], builtin_tools: tuple[str, ...]
-    ) -> AgentEngine:
+    def _rebuild_engine(connector_tools: list[Tool], builtin_tools: tuple[str, ...]) -> AgentEngine:
         return build_engine(
             settings,
             memory,
@@ -131,8 +136,10 @@ def build_components(settings: Settings) -> AppComponents:
         )
 
     def _apply_engine(new_engine: AgentEngine) -> None:
+        # Only the chat agent is re-wired with connector tools. The digest is a
+        # background job and stays on its confined engine (no web/file/bash) — it
+        # must NOT inherit chat's WebFetch or any connector tool.
         components.agent = new_engine
-        components.digests.set_engine(new_engine)
 
     # Env-provided OAuth app creds, keyed by provider (take precedence over the
     # DB-stored app creds set from the UI).

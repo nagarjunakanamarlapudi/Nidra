@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from pragya_assistant.agent.claude_code_engine import ClaudeCodeEngine
 from pragya_assistant.agent.codex_engine import CodexEngine
+from pragya_assistant.agent.completion import CompletionFn, engine_completion_fn
 from pragya_assistant.agent.core import LoopEngine
 from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.agent.guard import guard
@@ -61,32 +62,33 @@ def _codex_mcp_env(settings: Settings) -> dict[str, str]:
     return env
 
 
-def build_engine(
+def _make_engine(
     settings: Settings,
-    memory: MemoryService,
-    task_store: TaskStore | None = None,
-    calendar_service: CalendarService | None = None,
-    email_service: EmailService | None = None,
-    connector_tools: list[Tool] | None = None,
+    *,
+    tools: list[Tool],
+    system_prompt: str,
     builtin_tools: tuple[str, ...] = (),
-    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    allow_codex_bypass: bool = False,
 ) -> AgentEngine:
-    # Finance tools are intentionally NOT wired here: for in-process engines they
-    # arrive via the Plaid connector (so they're owned by the marketplace). The
-    # Codex MCP server still wires them directly (it has no connector runtime).
+    """The single place an engine is constructed — confinement + harden + guard.
+
+    Picks the inner brain per ``settings.agent_engine``, prepends the hardening
+    preamble to ``system_prompt`` (idempotent), and wraps the result in
+    :func:`guard` so its output is always scrubbed. Confinement is expressed by
+    the CALLER: chat passes its full ``tools`` + web ``builtin_tools``; the
+    confined builders pass ``tools=[]`` / ``builtin_tools=()`` so the engine can
+    reach no file/bash/web tool at all.
+
+    Codex is special: it self-wires its own MCP tools and can bypass the sandbox,
+    so the in-process ``tools`` list does not apply to it. ``allow_codex_bypass``
+    gates that privilege — it defaults to ``False`` (fail-closed), so only the
+    chat path (which passes ``allow_codex_bypass=True``) ever gets the memory MCP
+    + sandbox bypass. Every confined caller gets a minimal, read-only Codex.
+    """
     engine = settings.agent_engine
-    tools = build_agent_tools(
-        memory,
-        task_store,
-        calendar_service,
-        email_service,
-        connector_tools=connector_tools,
-        session_factory=session_factory,
-    )
-    # Soft defense layer: prepend the hardening preamble to the system prompt once,
-    # here, so EVERY brain built below (on every path) carries it. ``harden`` is
-    # idempotent, so re-hardening is safe.
-    system_prompt = harden(build_system_prompt())
+    # Soft defense layer: prepend the hardening preamble once, here, so EVERY
+    # brain built below (every path) carries it. ``harden`` is idempotent.
+    system_prompt = harden(system_prompt)
     # Every engine is wrapped in ``guard`` so its output is always scrubbed of
     # secrets — the single, engine-agnostic chokepoint of the output defense.
     if engine in _LOOP_PROVIDERS:
@@ -99,15 +101,7 @@ def build_engine(
             )
         )
     if engine == "codex":
-        return guard(
-            CodexEngine(
-                model=settings.codex_model,
-                system_prompt=system_prompt,
-                mcp_command=[sys.executable, "-m", "pragya_assistant.mcp_memory"],
-                mcp_env=_codex_mcp_env(settings),
-                bypass_sandbox=True,
-            )
-        )
+        return guard(_make_codex_engine(settings, system_prompt, allow_bypass=allow_codex_bypass))
     if engine == "claude-code":
         # ``builtin_tools`` are the SDK built-ins this engine may use (e.g.
         # ``WebSearch``/``WebFetch``). They are NOT hardcoded here: like finance
@@ -124,3 +118,89 @@ def build_engine(
             )
         )
     raise ValueError(f"Unknown agent engine: {engine!r}")
+
+
+def _make_codex_engine(
+    settings: Settings, system_prompt: str, *, allow_bypass: bool
+) -> CodexEngine:
+    """Build a Codex brain — privileged (chat) or fail-safe (confined).
+
+    Chat (``allow_bypass=True``): the memory MCP server + ``bypass_sandbox`` (the
+    container is the isolation boundary; single-user only). Unchanged behavior.
+
+    Confined (``allow_bypass=False``): NO memory MCP and NO sandbox bypass — a
+    read-only Codex with no extra tools. Codex self-wires tools via MCP, so
+    omitting the MCP server leaves it with none; the read-only sandbox blocks
+    file writes and network. This is the fail-safe for background jobs that must
+    never touch secrets, the filesystem, or the web.
+    """
+    if not allow_bypass:
+        return CodexEngine(
+            model=settings.codex_model,
+            system_prompt=system_prompt,
+            sandbox="read-only",
+            bypass_sandbox=False,
+        )
+    return CodexEngine(
+        model=settings.codex_model,
+        system_prompt=system_prompt,
+        mcp_command=[sys.executable, "-m", "pragya_assistant.mcp_memory"],
+        mcp_env=_codex_mcp_env(settings),
+        bypass_sandbox=True,
+    )
+
+
+def build_engine(
+    settings: Settings,
+    memory: MemoryService,
+    task_store: TaskStore | None = None,
+    calendar_service: CalendarService | None = None,
+    email_service: EmailService | None = None,
+    connector_tools: list[Tool] | None = None,
+    builtin_tools: tuple[str, ...] = (),
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> AgentEngine:
+    """The interactive chat engine: full agent tools + (optionally) web built-ins.
+
+    Finance tools are intentionally NOT wired here: for in-process engines they
+    arrive via the Plaid connector (so they're owned by the marketplace). The
+    Codex MCP server still wires them directly (it has no connector runtime).
+    Chat is the one privileged caller of Codex (``allow_codex_bypass=True``).
+    """
+    tools = build_agent_tools(
+        memory,
+        task_store,
+        calendar_service,
+        email_service,
+        connector_tools=connector_tools,
+        session_factory=session_factory,
+    )
+    return _make_engine(
+        settings,
+        tools=tools,
+        system_prompt=build_system_prompt(),
+        builtin_tools=builtin_tools,
+        allow_codex_bypass=True,
+    )
+
+
+def build_confined_engine(settings: Settings) -> AgentEngine:
+    """A fully confined engine: NO tools (no file/bash) and NO web built-ins, and
+    — for Codex — no memory MCP and no sandbox bypass. Hardened + guarded like
+    every engine. For background jobs (dreamer, digest) that must never reach the
+    web or the filesystem, so a prompt injection in ingested data has nowhere to
+    exfiltrate to."""
+    return _make_engine(
+        settings,
+        tools=[],
+        system_prompt=build_system_prompt(),
+        builtin_tools=(),
+    )
+
+
+def build_confined_completion_fn(settings: Settings) -> CompletionFn:
+    """A one-shot ``prompt -> text`` completion backed by a confined engine.
+
+    For the dreamer + digest: no tools, no web, no file/bash, scrubbed output,
+    hardened prompt — confined and guarded by construction."""
+    return engine_completion_fn(build_confined_engine(settings))

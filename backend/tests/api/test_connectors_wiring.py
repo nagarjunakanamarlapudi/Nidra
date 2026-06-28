@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from pragya_assistant.agent.core import LoopEngine
+from pragya_assistant.agent.guard import GuardedEngine
 from pragya_assistant.api.deps import build_components
 from pragya_assistant.config import Settings
 from pragya_assistant.connectors.manager import ConnectorManager
@@ -58,11 +59,22 @@ async def test_enabling_google_calendar_rewires_agent_tools(engine: AsyncEngine)
         assert components.connectors is not None
         await components.connectors.refresh()
 
-        assert isinstance(components.agent, LoopEngine)
-        tool_names = {spec.name for spec in components.agent._registry.specs()}
+        # The chat agent is guard-wrapped; unwrap to the loop brain that got the
+        # newly-enabled calendar tools.
+        assert isinstance(components.agent, GuardedEngine)
+        chat_brain = components.agent._inner
+        assert isinstance(chat_brain, LoopEngine)
+        tool_names = {spec.name for spec in chat_brain._registry.specs()}
         assert "gcal_agenda" in tool_names
         assert "gcal_upcoming" in tool_names
-        # the digest engine was swapped to the same re-wired engine
-        assert components.digests._engine is components.agent
+
+        # Security win: the digest runs on a CONFINED engine, NOT the re-wired
+        # chat agent — so it never inherits the connector (calendar/web) tools.
+        assert components.digests._engine is not components.agent
+        digest_brain = components.digests._engine
+        assert isinstance(digest_brain, GuardedEngine)
+        assert isinstance(digest_brain._inner, LoopEngine)
+        digest_tools = {spec.name for spec in digest_brain._inner._registry.specs()}
+        assert "gcal_agenda" not in digest_tools and digest_tools == set()
     finally:
         await components.engine.dispose()

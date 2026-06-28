@@ -38,10 +38,6 @@ class DigestService:
         self._timezone = timezone
         self._dreams = dreams
 
-    def set_engine(self, engine: AgentEngine) -> None:
-        """Swap the engine in place (used by the connector manager on re-wire)."""
-        self._engine = engine
-
     async def run(self, prompt_builder: Callable[[str], str] = build_digest_prompt) -> Digest:
         today = dt.datetime.now(ZoneInfo(self._timezone)).strftime("%A, %B %d, %Y")
         prompt = prompt_builder(today)
