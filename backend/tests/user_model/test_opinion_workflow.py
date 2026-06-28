@@ -7,8 +7,10 @@ from pragya_assistant.user_model.facts import Fact
 from pragya_assistant.user_model.opinion_workflow import (
     ProposedOpinion,
     Theme,
+    calibrate,
     form_opinions,
     group_facts,
+    validate_citations,
 )
 
 
@@ -68,3 +70,36 @@ async def test_form_opinions_tolerates_garbage_fields() -> None:
     assert ops[0].trait == "intent:x"
     assert ops[0].confidence == 0.0
     assert ops[0].evidence_fact_ids == []
+
+
+def test_validate_drops_uncited_and_unresolvable() -> None:
+    facts = [Fact("browser", "search", "searched 'tokyo'", event_ids=[1], id="f1")]
+    ops = [
+        ProposedOpinion("intent:travel", "Tokyo trip", 0.9, ["f1"]),      # ok
+        ProposedOpinion("trait:vibes", "mysterious", 0.9, []),             # uncited -> drop
+        ProposedOpinion("trait:ghost", "?", 0.9, ["f99"]),                 # bad id -> drop
+    ]
+    snaps = validate_citations(ops, facts)
+    assert [s.trait for s in snaps] == ["intent:travel"]
+    s = snaps[0]
+    assert s.derivation["event_ids"] == [1] and s.derivation["evidence_fact_ids"] == ["f1"]
+    assert s.provenance == ["browser"] and s.evidence == 1
+
+
+def test_confidence_capped_by_evidence() -> None:
+    facts = [
+        Fact("browser", "search", "a", event_ids=[1], id="f1"),
+        Fact("calendar", "event", "b", event_ids=[2], id="f2"),
+    ]
+    # One source, one citation -> cap 0.5 even though the LLM said 0.99.
+    one = validate_citations([ProposedOpinion("x", "v", 0.99, ["f1"])], facts)[0]
+    assert one.confidence == 0.5
+    # Two citations across two sources -> 0.5 + 0.15 + 0.15 = 0.8.
+    two = validate_citations([ProposedOpinion("y", "v", 0.99, ["f1", "f2"])], facts)[0]
+    assert two.confidence == 0.8
+    assert set(two.provenance) == {"browser", "calendar"}
+
+
+def test_calibrate_curve() -> None:
+    assert calibrate(1, 1) == 0.5
+    assert calibrate(5, 3) == min(0.95, round(0.5 + 0.15 * 4 + 0.15 * 2, 2))

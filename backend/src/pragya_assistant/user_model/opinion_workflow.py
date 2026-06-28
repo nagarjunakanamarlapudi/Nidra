@@ -15,6 +15,7 @@ from typing import Any
 
 from pragya_assistant.user_model.dreamer import extract_json
 from pragya_assistant.user_model.facts import Fact
+from pragya_assistant.user_model.store import TraitSnapshot
 
 LlmFn = Callable[[str], Awaitable[str]]
 
@@ -98,3 +99,41 @@ async def form_opinions(themes: list[Theme], facts: list[Fact], fn: LlmFn) -> li
         ids = [str(i) for i in raw.get("evidence_fact_ids", []) if isinstance(i, str | int)]
         out.append(ProposedOpinion(trait, raw.get("value"), conf, ids))
     return out
+
+
+def calibrate(n_citations: int, n_sources: int) -> float:
+    """High confidence must be EARNED by evidence — never blindly trust the LLM."""
+    return min(
+        0.95,
+        round(0.5 + 0.15 * (max(1, n_citations) - 1) + 0.15 * (max(1, n_sources) - 1), 2),
+    )
+
+
+def validate_citations(opinions: list[ProposedOpinion], facts: list[Fact]) -> list[TraitSnapshot]:
+    by_id = {f.id: f for f in facts}
+    snaps: list[TraitSnapshot] = []
+    for op in opinions:
+        cited = [by_id[i] for i in op.evidence_fact_ids if i in by_id]
+        if not cited:  # cite-or-omit: no real evidence -> dropped
+            continue
+        sources = sorted({f.source for f in cited})
+        event_ids = [eid for f in cited for eid in f.event_ids]
+        refs = [r for f in cited for r in f.refs]
+        confidence = min(op.confidence, calibrate(len(cited), len(sources)))
+        snaps.append(
+            TraitSnapshot(
+                trait=op.trait,
+                value=op.value,
+                confidence=confidence,
+                evidence=len(cited),
+                provenance=sources,
+                derivation={
+                    "method": "opinion-workflow",
+                    "evidence_fact_ids": [f.id for f in cited],
+                    "fact_summaries": [f.summary for f in cited],
+                    "event_ids": event_ids,
+                    "refs": refs,
+                },
+            )
+        )
+    return snaps
