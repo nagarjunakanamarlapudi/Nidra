@@ -47,3 +47,64 @@ def build_agent_tools(
     if connector_tools:
         tools += connector_tools
     return tools
+
+
+# The READ-ONLY data tools the digest may use. The digest is a background job
+# running on a CONFINED engine (no web/file/bash): it must GATHER information to
+# compose the summary, but never ACT — no writes (remember_*, set_preference,
+# add_task, complete_task) and no email draft/send (draft_reply, draft_email).
+# Fail-closed ALLOWLIST: a newly-added tool is excluded from the digest unless it
+# is explicitly listed here, so a future write/act tool can't silently leak in.
+DIGEST_READONLY_TOOLS = frozenset(
+    {
+        # memory (read): birthdays, people/notes lookups, preferences
+        "upcoming_birthdays",
+        "find_people",
+        "recall_notes",
+        "get_preferences",
+        # tasks (read): overdue / due-soon / open list
+        "list_tasks",
+        "due_tasks",
+        # calendar (read): today's agenda + upcoming
+        "agenda",
+        "upcoming_events",
+        # email (read ONLY — never draft/send): inbox triage
+        "list_emails",
+        "search_emails",
+        "unread_emails",
+        "read_email",
+        # finance (read only — the finance tools have no transfer/sync action)
+        "account_balances",
+        "spending_summary",
+        "search_transactions",
+        "net_worth",
+        "holdings",
+        "upcoming_bills",
+    }
+)
+
+
+def build_digest_tools(
+    memory: MemoryService,
+    task_store: TaskStore | None = None,
+    calendar_service: CalendarService | None = None,
+    email_service: EmailService | None = None,
+    finance_service: FinanceService | None = None,
+) -> list[Tool]:
+    """The digest's READ-ONLY data tools — the read subset of the agent tool set.
+
+    Enough to gather the digest's information (birthdays, tasks, calendar, email,
+    finance) with NO write/act/egress tool. Combined with ``builtin_tools=()`` on
+    the confined digest engine (no web/file/bash), the digest can read but never
+    act or exfiltrate even if ingested email/calendar data carries an injection."""
+    return [
+        tool
+        for tool in build_agent_tools(
+            memory,
+            task_store,
+            calendar_service,
+            email_service,
+            finance_service,
+        )
+        if tool.name in DIGEST_READONLY_TOOLS
+    ]

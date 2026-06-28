@@ -10,6 +10,7 @@ from pragya_assistant.agent.factory import (
 )
 from pragya_assistant.agent.guard import GuardedEngine
 from pragya_assistant.agent.hardening import HARDENING_PREAMBLE
+from pragya_assistant.agent.tools import Tool
 from pragya_assistant.config import Settings
 from pragya_assistant.memory.db import create_engine, create_session_factory
 from pragya_assistant.memory.service import MemoryService
@@ -193,3 +194,31 @@ def test_build_confined_completion_fn_returns_callable() -> None:
     # The dreamer/digest one-shot completion is backed by a confined engine.
     fn = build_confined_completion_fn(_settings(agent_engine="ollama"))
     assert callable(fn)
+
+
+def _noop_tool(name: str) -> Tool:
+    async def _handler(_args: dict[str, Any]) -> str:
+        return ""
+
+    return Tool(name=name, description="d", input_schema={"type": "object"}, handler=_handler)
+
+
+def test_confined_engine_with_data_tools_keeps_them_but_no_web() -> None:
+    # The digest is confined WITH read-only data tools: those tools are present,
+    # but there is still NO web/file/bash (builtin_tools stays ()).
+    tools = [_noop_tool("upcoming_birthdays"), _noop_tool("account_balances")]
+
+    loop_inner = build_confined_engine(_settings(agent_engine="ollama"), tools=tools)
+    assert isinstance(loop_inner, GuardedEngine)
+    loop_brain = loop_inner._inner
+    assert isinstance(loop_brain, LoopEngine)
+    assert {s.name for s in loop_brain._registry.specs()} == {
+        "upcoming_birthdays",
+        "account_balances",
+    }
+
+    cc_inner = build_confined_engine(_settings(agent_engine="claude-code"), tools=tools)
+    cc_brain = cast(ClaudeCodeEngine, cast(GuardedEngine, cc_inner)._inner)
+    assert {t.name for t in cc_brain._tools} == {"upcoming_birthdays", "account_balances"}
+    assert cc_brain._builtin_tools == ()  # still NO web/file/bash
+    assert cc_brain._options().tools == []

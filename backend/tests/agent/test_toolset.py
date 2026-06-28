@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from pragya_assistant.agent.toolset import build_agent_tools
+from pragya_assistant.agent.toolset import build_agent_tools, build_digest_tools
 from pragya_assistant.calendars.service import CalendarService
 from pragya_assistant.email_inbox.service import EmailService
 from pragya_assistant.memory.service import MemoryService
@@ -94,3 +94,48 @@ async def test_omits_calendar_tools_when_service_none(
     }
     assert "add_task" in names
     assert "agenda" not in names
+
+
+async def test_build_digest_tools_is_read_only(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The digest's tool set must let it GATHER data (birthdays, tasks, calendar,
+    email, finance) but never ACT: no writes, no email draft/send, no web/file/bash
+    (web/file/bash aren't in-process tools at all — gated by builtin_tools=())."""
+    names = {
+        t.name
+        for t in build_digest_tools(
+            _memory(session_factory),
+            TaskStore(session_factory),
+            CalendarService("http://feed"),
+            EmailService(_FakeInbox(), address="me@x.com"),
+            _FakeFinance(),
+        )
+    }
+    # read tools the digest needs are present
+    assert {
+        "upcoming_birthdays",
+        "get_preferences",
+        "list_tasks",
+        "due_tasks",
+        "agenda",
+        "upcoming_events",
+        "list_emails",
+        "unread_emails",
+        "read_email",
+        "account_balances",
+        "upcoming_bills",
+        "net_worth",
+    } <= names
+    # write / act / egress tools must be excluded (fail-closed)
+    assert names.isdisjoint(
+        {
+            "remember_note",
+            "remember_person",
+            "set_preference",
+            "add_task",
+            "complete_task",
+            "draft_reply",
+            "draft_email",
+        }
+    )

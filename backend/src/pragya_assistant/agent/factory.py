@@ -184,15 +184,19 @@ def build_engine(
     )
 
 
-def build_confined_engine(settings: Settings) -> AgentEngine:
-    """A fully confined engine: NO tools (no file/bash) and NO web built-ins, and
-    — for Codex — no memory MCP and no sandbox bypass. Hardened + guarded like
-    every engine. For background jobs (dreamer, digest) that must never reach the
-    web or the filesystem, so a prompt injection in ingested data has nowhere to
-    exfiltrate to."""
+def build_confined_engine(settings: Settings, *, tools: list[Tool] | None = None) -> AgentEngine:
+    """A confined engine: NO web built-ins (``builtin_tools=()``) and — for Codex
+    — no memory MCP and no sandbox bypass. Hardened + guarded like every engine.
+
+    ``tools`` is empty by default (the dreamer needs none). The digest passes a
+    READ-ONLY data subset (see :func:`build_digest_tools`): those let it gather
+    info, but they are in-process data tools — never web/file/bash (web is a
+    built-in gated by ``builtin_tools=()``; file/bash are SDK built-ins, never in
+    this list and explicitly disallowed). So even with tools the engine cannot
+    reach the web or filesystem, and a prompt injection has nowhere to exfiltrate."""
     return _make_engine(
         settings,
-        tools=[],
+        tools=tools or [],
         system_prompt=build_system_prompt(),
         builtin_tools=(),
     )
@@ -201,6 +205,6 @@ def build_confined_engine(settings: Settings) -> AgentEngine:
 def build_confined_completion_fn(settings: Settings) -> CompletionFn:
     """A one-shot ``prompt -> text`` completion backed by a confined engine.
 
-    For the dreamer + digest: no tools, no web, no file/bash, scrubbed output,
-    hardened prompt — confined and guarded by construction."""
+    For the dreamer: no tools, no web, no file/bash, scrubbed output, hardened
+    prompt — confined and guarded by construction."""
     return engine_completion_fn(build_confined_engine(settings))

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.agent.factory import build_confined_engine, build_engine
 from pragya_assistant.agent.tools import Tool
+from pragya_assistant.agent.toolset import build_digest_tools
 from pragya_assistant.calendars.service import CalendarService
 from pragya_assistant.channels.telegram.client import TelegramClient
 from pragya_assistant.config import Settings
@@ -84,11 +85,13 @@ def build_components(settings: Settings) -> AppComponents:
         session_factory=session_factory,
     )
     telegram = TelegramClient(settings.telegram_bot_token) if settings.telegram_bot_token else None
-    # The digest is a background job: run it on a CONFINED engine (no tools, no
-    # web, no file/bash) so it never inherits chat's WebFetch — even though chat's
-    # tools get re-wired as connectors change, the digest stays confined.
+    # The digest is a background job: run it on a CONFINED engine — no web/file/bash
+    # (builtin_tools=()) and never re-wired with connector tools as chat is — but
+    # WITH its READ-ONLY data tools so it can actually gather the digest (birthdays,
+    # tasks, calendar, email, finance) without any way to act or exfiltrate.
+    digest_tools = build_digest_tools(memory, task_store, calendar_service, email_service, finance)
     digests = DigestService(
-        engine=build_confined_engine(settings),
+        engine=build_confined_engine(settings, tools=digest_tools),
         store=DigestStore(session_factory),
         telegram=telegram,
         allowed_chat_ids=settings.telegram_allowed_chat_ids,

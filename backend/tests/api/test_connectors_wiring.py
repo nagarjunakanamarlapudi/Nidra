@@ -69,12 +69,18 @@ async def test_enabling_google_calendar_rewires_agent_tools(engine: AsyncEngine)
         assert "gcal_upcoming" in tool_names
 
         # Security win: the digest runs on a CONFINED engine, NOT the re-wired
-        # chat agent — so it never inherits the connector (calendar/web) tools.
+        # chat agent. It HAS its read-only data tools (so the digest has info) but
+        # never the connector/web tools and never any write/act/draft tool.
         assert components.digests._engine is not components.agent
         digest_brain = components.digests._engine
         assert isinstance(digest_brain, GuardedEngine)
         assert isinstance(digest_brain._inner, LoopEngine)
         digest_tools = {spec.name for spec in digest_brain._inner._registry.specs()}
-        assert "gcal_agenda" not in digest_tools and digest_tools == set()
+        # read-only data tools present (memory + tasks always wired)
+        assert {"upcoming_birthdays", "get_preferences", "due_tasks", "list_tasks"} <= digest_tools
+        # no connector tool (gcal_agenda was just enabled for chat), no write/act tool
+        assert digest_tools.isdisjoint(
+            {"gcal_agenda", "gcal_upcoming", "remember_person", "add_task", "draft_email"}
+        )
     finally:
         await components.engine.dispose()
