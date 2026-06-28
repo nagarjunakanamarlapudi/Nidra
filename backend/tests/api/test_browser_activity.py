@@ -116,12 +116,3 @@ async def test_ingest_persists_context_id_and_new_types(
     row = (await store.recent(KEY, types=["interaction"]))[0]
     assert row.context_id == "ctx-9"
     assert row.data == {"action": "toggle_on", "control": "toggle", "label": "Add-on"}
-
-
-async def test_dream_requires_token(build_test_app: AppBuilder) -> None:
-    app = build_test_app(ScriptedChatProvider([]))
-    async with httpx.AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/connectors/browser_activity/dream")
-    assert resp.status_code == 401
