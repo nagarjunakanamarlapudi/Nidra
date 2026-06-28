@@ -83,6 +83,9 @@ def test_validate_drops_uncited_and_unresolvable() -> None:
     assert [s.trait for s in snaps] == ["intent:travel"]
     s = snaps[0]
     assert s.derivation["event_ids"] == [1] and s.derivation["evidence_fact_ids"] == ["f1"]
+    assert s.derivation["method"] == "opinion-workflow"
+    assert s.derivation["fact_summaries"] == ["searched 'tokyo'"]
+    assert s.derivation["refs"] == []
     assert s.provenance == ["browser"] and s.evidence == 1
 
 
@@ -98,8 +101,11 @@ def test_confidence_capped_by_evidence() -> None:
     two = validate_citations([ProposedOpinion("y", "v", 0.99, ["f1", "f2"])], facts)[0]
     assert two.confidence == 0.8
     assert set(two.provenance) == {"browser", "calendar"}
+    # LLM confidence already below the calibrated floor -> kept unchanged.
+    low = validate_citations([ProposedOpinion("z", "v", 0.3, ["f1"])], facts)[0]
+    assert low.confidence == 0.3  # min() keeps the LLM's lower confidence
 
 
 def test_calibrate_curve() -> None:
     assert calibrate(1, 1) == 0.5
-    assert calibrate(5, 3) == min(0.95, round(0.5 + 0.15 * 4 + 0.15 * 2, 2))
+    assert calibrate(5, 3) == 0.95

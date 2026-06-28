@@ -117,8 +117,8 @@ def validate_citations(opinions: list[ProposedOpinion], facts: list[Fact]) -> li
         if not cited:  # cite-or-omit: no real evidence -> dropped
             continue
         sources = sorted({f.source for f in cited})
-        event_ids = [eid for f in cited for eid in f.event_ids]
-        refs = [r for f in cited for r in f.refs]
+        event_ids = list(dict.fromkeys(eid for f in cited for eid in f.event_ids))
+        refs = list(dict.fromkeys(r for f in cited for r in f.refs))
         confidence = min(op.confidence, calibrate(len(cited), len(sources)))
         snaps.append(
             TraitSnapshot(
