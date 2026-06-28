@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Nidra — C, three ways to handle the decision</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --night-0:#07060d; --ink-hi:#F5F2EC; --ink-mid:#C3BFD2; --ink-lo:#8480A0;
+    --dawn:#FFB279; --dawn-2:#FF8E6E; --moon:#AEB6FF; --moon-2:#C9A6FF;
+    --cal:#FFC27A; --web:#7FE0D6; --maps:#8FD0FF;
+    --ease-out:cubic-bezier(.23,1,.32,1);
+    --voice:"Fraunces", Georgia, serif; --ui:"Inter", system-ui, -apple-system, sans-serif;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; }
+  body{ font-family:var(--ui); color:var(--ink-hi); background:#040308; padding:40px 18px 70px; }
+  .pagehead{ max-width:1280px; margin:0 auto 30px; text-align:center; }
+  .pagehead h1{ font-family:var(--voice); font-weight:500; font-size:28px; margin:0; letter-spacing:-.01em; }
+  .pagehead p{ color:var(--ink-lo); font-size:14px; max-width:640px; margin:10px auto 0; line-height:1.55; }
+  .row{ display:flex; flex-wrap:wrap; gap:30px; justify-content:center; align-items:flex-start; max-width:1320px; margin:0 auto; }
+  .shot{ display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .cap{ font-size:12.5px; color:var(--ink-mid); max-width:390px; line-height:1.55; text-align:center; }
+  .cap b{ color:var(--ink-hi); font-weight:700; letter-spacing:.03em; } .cap .risk{ color:var(--ink-lo); }
+
+  .phone{ position:relative; width:390px; height:820px; border-radius:54px; overflow:hidden; background:var(--night-0); isolation:isolate;
+    box-shadow:0 0 0 12px #0b0a12, 0 0 0 14px #2a2740, 0 60px 130px -30px rgba(0,0,0,.95), 0 0 100px -20px rgba(174,182,255,.16); }
+  .island{ position:absolute; top:11px; left:50%; transform:translateX(-50%); width:122px; height:34px; background:#000; border-radius:999px; z-index:200; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:54px; z-index:150; display:flex; align-items:center; justify-content:space-between; padding:18px 30px 0; font-size:14px; font-weight:600; pointer-events:none; }
+  .home-ind{ position:absolute; bottom:8px; left:50%; transform:translateX(-50%); width:134px; height:5px; border-radius:99px; background:rgba(255,255,255,.3); z-index:210; }
+  .aurora{ position:absolute; inset:-15%; z-index:0; filter:blur(10px); }
+  .blob{ position:absolute; border-radius:50%; filter:blur(34px); opacity:.5; mix-blend-mode:screen; }
+  .b1{ width:340px; height:340px; left:-60px; top:-20px; background:radial-gradient(circle,#7C86FF,transparent 70%); animation:drift1 26s var(--ease-out) infinite; }
+  .b2{ width:300px; height:300px; right:-70px; top:120px; background:radial-gradient(circle,#C9A6FF,transparent 70%); animation:drift2 32s var(--ease-out) infinite; }
+  .b3{ width:320px; height:320px; left:-40px; bottom:60px; background:radial-gradient(circle,#FF9E73,transparent 72%); opacity:.36; animation:drift3 30s var(--ease-out) infinite; }
+  @keyframes drift1{ 0%,100%{ transform:translate(0,0) scale(1) } 50%{ transform:translate(36px,40px) scale(1.12) } }
+  @keyframes drift2{ 0%,100%{ transform:translate(0,0) scale(1) } 50%{ transform:translate(-40px,30px) scale(1.16) } }
+  @keyframes drift3{ 0%,100%{ transform:translate(0,0) scale(1.05) } 50%{ transform:translate(30px,-36px) scale(.9) } }
+
+  .sheet{ position:absolute; left:0; right:0; bottom:0; height:94%; z-index:90; background:rgba(17,15,28,.62);
+    backdrop-filter:saturate(160%) blur(40px); -webkit-backdrop-filter:saturate(160%) blur(40px);
+    border-top:1px solid rgba(255,255,255,.16); border-radius:34px 34px 0 0;
+    box-shadow:0 -20px 60px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.22); display:flex; flex-direction:column; }
+  .sheet-handle{ flex:none; padding:10px 22px 8px; }
+  .grab{ width:38px; height:5px; border-radius:99px; background:rgba(255,255,255,.28); margin:0 auto 8px; }
+  .sheet-head{ display:flex; align-items:center; justify-content:space-between; }
+  .sheet-lbl{ font-size:13.5px; font-weight:600; color:var(--ink-mid); letter-spacing:.03em; }
+  .x{ width:32px; height:32px; border-radius:50%; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:var(--ink-hi); display:grid; place-items:center; }
+  .sheet-body{ flex:1; overflow-y:auto; overflow-x:hidden; padding:6px 20px 30px; scrollbar-width:none; }
+  .sheet-body::-webkit-scrollbar{ display:none; }
+
+  .s-hero{ position:relative; height:148px; border-radius:24px; overflow:hidden; margin-top:4px; background:linear-gradient(160deg,#FF9255,#6E5BFF); }
+  .s-hero img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .s-hero .grade{ position:absolute; inset:0; background:linear-gradient(180deg,rgba(0,0,0,.1) 0%,transparent 30%,rgba(7,5,14,.84) 100%), linear-gradient(150deg,rgba(255,150,90,.3),transparent 55%); }
+  .hero-cap{ position:absolute; inset:0; padding:15px; display:flex; flex-direction:column; justify-content:flex-end; z-index:2; }
+  .hero-k{ font-size:12px; font-weight:600; letter-spacing:.04em; color:rgba(255,255,255,.9); text-shadow:0 1px 8px rgba(0,0,0,.6); }
+  .hero-t{ font-family:var(--voice); font-weight:500; font-size:26px; line-height:1.06; color:#fff; margin:5px 0 0; text-shadow:0 2px 14px rgba(0,0,0,.5); }
+  .countchip{ position:absolute; top:12px; right:12px; z-index:3; display:flex; align-items:center; gap:5px; padding:6px 11px; border-radius:99px; background:rgba(7,5,14,.5); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,.2); font-size:12px; font-weight:600; color:#fff; }
+  .s-note{ font-family:var(--voice); font-size:16px; line-height:1.5; color:var(--ink-mid); margin:12px 0 0; }
+
+  /* shared bits */
+  .sources{ display:flex; align-items:center; gap:13px; margin-top:13px; flex-wrap:wrap; }
+  .sources .lab{ font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-lo); }
+  .src{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; color:var(--ink-mid); }
+  .src .d{ width:6px; height:6px; border-radius:50%; }
+  .btn{ flex:1; border:none; cursor:pointer; font-family:var(--ui); font-weight:600; font-size:14px; padding:12px 14px; border-radius:13px; color:var(--ink-hi); background:rgba(255,255,255,.09); }
+  .btn.primary{ color:#2a1206; background:linear-gradient(180deg,var(--dawn),var(--dawn-2)); box-shadow:0 10px 24px -12px rgba(255,150,100,.6); }
+  .dacts{ display:flex; gap:10px; margin-top:15px; }
+  .seclabel{ font-size:11.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase; color:var(--ink-lo); margin:22px 2px 13px; }
+  .thing{ display:flex; align-items:flex-start; gap:10px; justify-content:space-between; }
+  .tgrow{ flex:1; min-width:0; } .tname{ font-family:var(--ui); font-weight:600; font-size:14.5px; color:var(--ink-hi); }
+  .because{ font-family:var(--voice); font-style:italic; font-size:12.5px; line-height:1.42; color:var(--ink-lo); margin-top:5px; display:flex; gap:6px; }
+  .because::before{ content:"↳"; color:var(--moon-2); font-style:normal; flex:none; }
+  .pill{ flex:none; align-self:flex-start; margin-top:1px; font-family:var(--ui); font-weight:600; font-size:10.5px; padding:4px 9px; border-radius:8px; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+  .pill.ver{ color:var(--web); background:rgba(127,224,214,.13); border:1px solid rgba(127,224,214,.32); }
+  .pill.pick{ color:var(--dawn); background:rgba(255,178,121,.14); border:1px solid rgba(255,178,121,.34); }
+  .pill.book{ color:#FFC27A; background:transparent; border:1px dashed rgba(255,194,122,.5); }
+  .pill.saved{ color:var(--ink-mid); background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.13); }
+
+  /* route ribbon */
+  .ribbon{ border-radius:22px; padding:16px 18px 18px; margin-top:18px; background:linear-gradient(135deg, rgba(255,255,255,.1), rgba(255,255,255,.03)); border:1px solid rgba(255,255,255,.18); box-shadow:inset 0 1px 0 rgba(255,255,255,.22); }
+  .rlbl{ font-size:11px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--ink-lo); }
+  .rmain{ display:flex; align-items:center; gap:10px; margin-top:18px; }
+  .rnode{ display:flex; flex-direction:column; align-items:center; gap:7px; flex:none; }
+  .rd{ width:13px; height:13px; border-radius:50%; background:var(--dawn); box-shadow:0 0 10px rgba(255,178,121,.7); }
+  .rcity{ font-family:var(--voice); font-weight:600; font-size:16px; }
+  .rseg{ flex:1; height:2px; border-radius:2px; background:linear-gradient(90deg,var(--dawn),var(--moon)); position:relative; margin-bottom:23px; }
+  .rseg span{ position:absolute; top:-22px; left:50%; transform:translateX(-50%); white-space:nowrap; font-size:11px; color:var(--ink-mid); font-weight:600; }
+  .rspur{ display:flex; align-items:center; gap:9px; margin-top:16px; padding-top:14px; border-top:1px dashed rgba(255,255,255,.13); }
+  .rx{ width:20px; height:20px; border-radius:50%; display:grid; place-items:center; font-size:11px; font-weight:700; color:var(--dawn); border:1px dashed rgba(255,178,121,.6); flex:none; }
+  .rspur .rt{ font-size:12.5px; color:var(--dawn); } .rspur .rt b{ color:#fff; }
+
+  /* compact stop */
+  .cstop{ display:flex; gap:13px; align-items:flex-start; }
+  .cthumb{ width:62px; height:62px; border-radius:15px; overflow:hidden; flex:none; position:relative; border:1px solid rgba(255,255,255,.12); background:linear-gradient(160deg,#3a2e52,#23203a); display:grid; place-items:center; font-size:22px; }
+  .cthumb img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .cinfo{ flex:1; min-width:0; } .cday{ font-size:10.5px; font-weight:700; letter-spacing:.1em; color:var(--ink-lo); }
+  .cplace{ font-family:var(--voice); font-weight:600; font-size:18px; margin:1px 0 0; }
+  .cthings{ display:flex; flex-direction:column; gap:11px; margin-top:10px; }
+  .clink{ display:flex; align-items:center; gap:9px; margin:2px 0 2px 31px; color:var(--ink-lo); font-size:11.5px; font-weight:600; }
+  .clink .ln{ width:2px; height:20px; background:repeating-linear-gradient(rgba(255,255,255,.28) 0 3px, transparent 3px 7px); }
+  .more{ display:flex; align-items:center; gap:10px; margin:18px 2px 0; color:var(--ink-lo); font-size:12px; }
+  .more::before,.more::after{ content:""; flex:1; height:1px; background:rgba(255,255,255,.1); }
+
+  /* ===== V1 · Nidra speaks (no box) ===== */
+  .aside{ margin-top:18px; }
+  .aside p{ font-family:var(--voice); font-size:17px; line-height:1.5; color:var(--ink-hi); margin:0; }
+  .aside p b{ color:#fff; }
+  .aacts{ display:flex; align-items:center; gap:18px; margin-top:16px; }
+  .btnp{ border:none; cursor:pointer; font-family:var(--ui); font-weight:600; font-size:14px; padding:12px 20px; border-radius:13px; color:#2a1206; background:linear-gradient(180deg,var(--dawn),var(--dawn-2)); box-shadow:0 10px 24px -12px rgba(255,150,100,.6); }
+  .btnt{ background:none; border:none; color:var(--ink-lo); font-family:var(--ui); font-weight:600; font-size:14px; cursor:pointer; padding:0; }
+
+  /* ===== V2 · decision lives on the route ===== */
+  .rdecide{ margin-top:16px; padding-top:15px; border-top:1px dashed rgba(255,255,255,.14); }
+  .rdtop{ display:flex; align-items:center; gap:9px; }
+  .rdtop .rt{ font-size:13px; color:var(--dawn); } .rdtop .rt b{ color:#fff; }
+  .rdwhy{ font-size:13px; line-height:1.5; color:var(--ink-mid); margin:10px 0 0; }
+
+  /* ===== V3 · soft suggestion card (reskinned) ===== */
+  .suggest{ position:relative; border-radius:22px; padding:17px 17px 17px 20px; margin-top:18px; overflow:hidden; background:linear-gradient(135deg, rgba(255,255,255,.1), rgba(255,255,255,.03)); border:1px solid rgba(255,255,255,.17); box-shadow:inset 0 1px 0 rgba(255,255,255,.2); }
+  .suggest::before{ content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:3px; background:linear-gradient(var(--moon),var(--moon-2)); }
+  .shead{ display:flex; align-items:center; gap:8px; }
+  .savatar{ width:22px; height:22px; border-radius:50%; display:grid; place-items:center; font-size:12px; background:rgba(174,182,255,.16); border:1px solid rgba(174,182,255,.3); }
+  .sklabel{ font-size:12.5px; font-weight:600; color:var(--ink-mid); }
+  .suggest h3{ font-family:var(--voice); font-weight:500; font-size:20px; line-height:1.22; margin:11px 0 0; color:var(--ink-hi); }
+  .why{ font-size:13px; line-height:1.5; color:var(--ink-mid); margin:9px 0 0; }
+</style>
+</head>
+<body>
+  <div class="pagehead">
+    <h1>C, three ways to make the call feel like Nidra — not an alert</h1>
+    <p>Same layout you liked. Only the decision moment changes. The old amber "ONE THING BEFORE THIS IS SET" box is gone in all three.</p>
+  </div>
+
+  <div class="row">
+
+    <!-- ================= V1 · NIDRA SPEAKS ================= -->
+    <div class="shot">
+      <div class="phone">
+        <div class="aurora"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+        <div class="island"></div>
+        <div class="sb"><span>7:02</span><span><svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1" width="21" height="11" rx="3" stroke="#F5F2EC" stroke-opacity=".5"/><rect x="3" y="3" width="16" height="7" rx="1.5" fill="#F5F2EC"/></svg></span></div>
+        <section class="sheet">
+          <div class="sheet-handle"><div class="grab"></div><div class="sheet-head"><span class="sheet-lbl">🗾 Tokyo Trip</span><button class="x">✕</button></div></div>
+          <div class="sheet-body">
+            <div class="s-hero"><img src="https://picsum.photos/seed/kyotostreet/720/440" onerror="this.remove()" alt=""><div class="grade"></div><div class="countchip">✈ in 38 days</div><div class="hero-cap"><span class="hero-k">🗾 TOKYO TRIP</span><h1 class="hero-t">Your trip to Japan</h1></div></div>
+            <p class="s-note">Five days, mid-range, walkable — and mostly sorted.</p>
+
+            <div class="aside">
+              <p>One call before I lock this in — the three ryokans you saved are all in <b>Hakone</b>, 90 minutes each way. On a five-day trip a night in <b>Kyoto</b> fits you better, and costs less. I already found one.</p>
+              <div class="aacts"><button class="btnp">Swap to Kyoto</button><button class="btnt">Keep Hakone</button></div>
+              <div class="sources"><span class="lab">Stitched from</span><span class="src"><span class="d" style="background:var(--web)"></span>web</span><span class="src"><span class="d" style="background:var(--maps)"></span>maps</span><span class="src"><span class="d" style="background:var(--cal)"></span>calendar</span></div>
+            </div>
+
+            <div class="ribbon">
+              <div class="rlbl">The route</div>
+              <div class="rmain"><div class="rnode"><span class="rd"></span><span class="rcity">Tokyo</span></div><div class="rseg"><span>shinkansen · 2h15</span></div><div class="rnode"><span class="rd"></span><span class="rcity">Kyoto</span></div></div>
+              <div class="rspur"><span class="rx">✗</span><span class="rt"><b>Hakone</b> — skipped · +3h round-trip off your line</span></div>
+            </div>
+
+            <div class="seclabel">The five days</div>
+            <div class="cstop"><span class="cthumb"><img src="https://picsum.photos/seed/tokyocity9/200/200" onerror="this.remove()" alt="">🗼</span><div class="cinfo"><div class="cday">DAY 1–2</div><h4 class="cplace">Tokyo</h4>
+              <div class="cthings"><div class="thing"><div class="tgrow"><div class="tname">3 ramen spots</div><div class="because">you searched Tokyo ramen 3× last week</div></div><span class="pill ver">✓ verified</span></div></div>
+            </div></div>
+            <div class="more">Kyoto · ryokan · fly home</div>
+          </div>
+        </section>
+        <div class="home-ind"></div>
+      </div>
+      <div class="cap"><b>C1 · NIDRA SPEAKS</b><br>The call is just Nidra talking, in her voice — no box, no alarm. Calmest. <span class="risk">Risk: the action can feel less anchored without a container.</span></div>
+    </div>
+
+    <!-- ================= V2 · ON THE ROUTE ================= -->
+    <div class="shot">
+      <div class="phone">
+        <div class="aurora"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+        <div class="island"></div>
+        <div class="sb"><span>7:02</span><span><svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1" width="21" height="11" rx="3" stroke="#F5F2EC" stroke-opacity=".5"/><rect x="3" y="3" width="16" height="7" rx="1.5" fill="#F5F2EC"/></svg></span></div>
+        <section class="sheet">
+          <div class="sheet-handle"><div class="grab"></div><div class="sheet-head"><span class="sheet-lbl">🗾 Tokyo Trip</span><button class="x">✕</button></div></div>
+          <div class="sheet-body">
+            <div class="s-hero"><img src="https://picsum.photos/seed/kyotostreet/720/440" onerror="this.remove()" alt=""><div class="grade"></div><div class="countchip">✈ in 38 days</div><div class="hero-cap"><span class="hero-k">🗾 TOKYO TRIP</span><h1 class="hero-t">Your trip to Japan</h1></div></div>
+            <p class="s-note">Five days, mid-range, walkable. One stop on your route needs a call.</p>
+
+            <div class="ribbon">
+              <div class="rlbl">The route</div>
+              <div class="rmain"><div class="rnode"><span class="rd"></span><span class="rcity">Tokyo</span></div><div class="rseg"><span>shinkansen · 2h15</span></div><div class="rnode"><span class="rd"></span><span class="rcity">Kyoto</span></div></div>
+              <div class="rdecide">
+                <div class="rdtop"><span class="rx">?</span><span class="rt"><b>Day 3 · Hakone</b> — 90 min each way</span></div>
+                <p class="rdwhy">It's where your 3 saved ryokans are — but it's a long detour for a 5-day trip. A Kyoto night fits how you travel, and costs less. I found one.</p>
+                <div class="dacts"><button class="btn primary">Swap to Kyoto</button><button class="btn">Keep Hakone</button></div>
+                <div class="sources"><span class="lab">Stitched from</span><span class="src"><span class="d" style="background:var(--web)"></span>web</span><span class="src"><span class="d" style="background:var(--maps)"></span>maps</span><span class="src"><span class="d" style="background:var(--cal)"></span>calendar</span></div>
+              </div>
+            </div>
+
+            <div class="seclabel">The five days</div>
+            <div class="cstop"><span class="cthumb"><img src="https://picsum.photos/seed/tokyocity9/200/200" onerror="this.remove()" alt="">🗼</span><div class="cinfo"><div class="cday">DAY 1–2</div><h4 class="cplace">Tokyo</h4>
+              <div class="cthings"><div class="thing"><div class="tgrow"><div class="tname">3 ramen spots</div><div class="because">you searched Tokyo ramen 3× last week</div></div><span class="pill ver">✓ verified</span></div></div>
+            </div></div>
+            <div class="more">Kyoto · ryokan · fly home</div>
+          </div>
+        </section>
+        <div class="home-ind"></div>
+      </div>
+      <div class="cap"><b>C2 · ON THE ROUTE</b><br>The choice lives on the Hakone spur, where the geometry already explains it. One fewer card; decision + map-sense in one place. <b>My pick.</b></div>
+    </div>
+
+    <!-- ================= V3 · SOFT SUGGESTION ================= -->
+    <div class="shot">
+      <div class="phone">
+        <div class="aurora"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+        <div class="island"></div>
+        <div class="sb"><span>7:02</span><span><svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1" width="21" height="11" rx="3" stroke="#F5F2EC" stroke-opacity=".5"/><rect x="3" y="3" width="16" height="7" rx="1.5" fill="#F5F2EC"/></svg></span></div>
+        <section class="sheet">
+          <div class="sheet-handle"><div class="grab"></div><div class="sheet-head"><span class="sheet-lbl">🗾 Tokyo Trip</span><button class="x">✕</button></div></div>
+          <div class="sheet-body">
+            <div class="s-hero"><img src="https://picsum.photos/seed/kyotostreet/720/440" onerror="this.remove()" alt=""><div class="grade"></div><div class="countchip">✈ in 38 days</div><div class="hero-cap"><span class="hero-k">🗾 TOKYO TRIP</span><h1 class="hero-t">Your trip to Japan</h1></div></div>
+            <p class="s-note">Five days, mid-range, walkable — and mostly sorted.</p>
+
+            <div class="suggest">
+              <div class="shead"><span class="savatar">🌙</span><span class="sklabel">A small call before I lock it in</span></div>
+              <h3>Swap Day 3 from Hakone to Kyoto?</h3>
+              <p class="why">The 3 ryokans you saved are all in Hakone — 90 min each way. A Kyoto night fits how you travel, and costs less. I already found one.</p>
+              <div class="sources"><span class="lab">Stitched from</span><span class="src"><span class="d" style="background:var(--web)"></span>web</span><span class="src"><span class="d" style="background:var(--maps)"></span>maps</span><span class="src"><span class="d" style="background:var(--cal)"></span>calendar</span></div>
+              <div class="dacts"><button class="btn primary">Swap to Kyoto</button><button class="btn">Keep Hakone</button></div>
+            </div>
+
+            <div class="ribbon">
+              <div class="rlbl">The route</div>
+              <div class="rmain"><div class="rnode"><span class="rd"></span><span class="rcity">Tokyo</span></div><div class="rseg"><span>shinkansen · 2h15</span></div><div class="rnode"><span class="rd"></span><span class="rcity">Kyoto</span></div></div>
+              <div class="rspur"><span class="rx">✗</span><span class="rt"><b>Hakone</b> — skipped · +3h round-trip off your line</span></div>
+            </div>
+
+            <div class="seclabel">The five days</div>
+            <div class="cstop"><span class="cthumb"><img src="https://picsum.photos/seed/tokyocity9/200/200" onerror="this.remove()" alt="">🗼</span><div class="cinfo"><div class="cday">DAY 1–2</div><h4 class="cplace">Tokyo</h4>
+              <div class="cthings"><div class="thing"><div class="tgrow"><div class="tname">3 ramen spots</div><div class="because">you searched Tokyo ramen 3× last week</div></div><span class="pill ver">✓ verified</span></div></div>
+            </div></div>
+            <div class="more">Kyoto · ryokan · fly home</div>
+          </div>
+        </section>
+        <div class="home-ind"></div>
+      </div>
+      <div class="cap"><b>C3 · SOFT SUGGESTION</b><br>Still a card for prominence, but neutral glass + a moon accent + plain language — not an amber alert. <span class="risk">Risk: closest to the one you didn't like.</span></div>
+    </div>
+
+  </div>
+</body>
+</html>

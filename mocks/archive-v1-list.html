@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Nidra — mobile mocks (Round 1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* ============================================================
+     NIDRA — design tokens  (these are the shared web+app system)
+     ============================================================ */
+  :root {
+    /* night base (layered, slight plum/indigo cast) */
+    --night-0:#09080F;        /* deepest backdrop */
+    --night-1:#100E1B;        /* screen bg */
+    --night-2:#171428;        /* card */
+    --night-3:#201B36;        /* raised / pressed */
+    --hair:rgba(255,255,255,.07);
+    --hair-2:rgba(255,255,255,.12);
+
+    /* warm paper ink (never pure white) */
+    --ink-hi:#F4F0E8;
+    --ink-mid:#B5B0C6;
+    --ink-lo:#7C7796;
+
+    /* dawn (morning / warmth / primary action) */
+    --dawn:#FFB279;
+    --dawn-2:#FF8E6E;
+    --dawn-soft:rgba(255,160,110,.16);
+
+    /* moon (night / dream / belief) */
+    --moon:#AEB6FF;
+    --moon-2:#C9A6FF;
+    --moon-soft:rgba(174,182,255,.14);
+
+    /* surfaces of "you" (provenance) */
+    --cal:#FFC27A; --mail:#FF9AA8; --read:#C9A6FF; --web:#7FE0D6; --money:#9BE6A8;
+
+    --r-card:24px; --r-lg:30px; --r-pill:999px;
+
+    --ease-out:cubic-bezier(.23,1,.32,1);
+    --ease-drawer:cubic-bezier(.32,.72,0,1);
+
+    --font-voice:"Fraunces", Georgia, "Times New Roman", serif;
+    --font-ui:"Inter", system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; margin:0; }
+  body {
+    font-family:var(--font-ui);
+    background:
+      radial-gradient(120% 80% at 78% -8%, rgba(201,166,255,.10), transparent 60%),
+      radial-gradient(90% 70% at 12% 108%, rgba(255,160,110,.08), transparent 60%),
+      #050409;
+    color:var(--ink-hi);
+    display:flex; flex-wrap:wrap; gap:40px;
+    align-items:center; justify-content:center;
+    min-height:100%; padding:48px 24px;
+  }
+
+  .shot { display:flex; flex-direction:column; align-items:center; gap:16px; }
+  .shot .cap { font-size:13px; color:var(--ink-lo); letter-spacing:.02em; }
+
+  /* ============================ device ============================ */
+  .phone {
+    position:relative;
+    width:390px; height:844px;
+    background:var(--night-1);
+    border-radius:54px;
+    box-shadow:
+      0 0 0 12px #0b0a12,
+      0 0 0 14px #2a2740,
+      0 50px 120px -30px rgba(0,0,0,.9),
+      0 0 90px -20px rgba(174,182,255,.12);
+    overflow:hidden;
+    isolation:isolate;
+  }
+
+  .island {
+    position:absolute; top:11px; left:50%; transform:translateX(-50%);
+    width:122px; height:34px; background:#000; border-radius:999px; z-index:60;
+  }
+  .sb {
+    position:absolute; top:0; left:0; right:0; height:54px; z-index:55;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 30px 0; font-size:14px; font-weight:600; color:var(--ink-hi);
+    pointer-events:none;
+  }
+  .sb .right { display:flex; gap:7px; align-items:center; }
+  .sb svg { display:block; }
+
+  /* ============================ screens ============================ */
+  .screens { position:absolute; inset:0; }
+  .screen {
+    position:absolute; inset:0;
+    padding:62px 0 104px;
+    overflow-y:auto; overflow-x:hidden;
+    opacity:0; transform:translateY(10px) scale(.992); pointer-events:none;
+    transition:opacity .3s var(--ease-out), transform .3s var(--ease-out);
+    scrollbar-width:none;
+  }
+  .screen::-webkit-scrollbar{ display:none; }
+  .screen.active { opacity:1; transform:none; pointer-events:auto; }
+  .pad { padding:0 22px; }
+
+  /* staggered entrance for direct children marked .st */
+  .screen.active .st, .sheet.open .st {
+    animation:rise .5s var(--ease-out) backwards;
+  }
+  .st:nth-child(1){animation-delay:.02s}.st:nth-child(2){animation-delay:.07s}
+  .st:nth-child(3){animation-delay:.12s}.st:nth-child(4){animation-delay:.17s}
+  .st:nth-child(5){animation-delay:.22s}.st:nth-child(6){animation-delay:.27s}
+  .st:nth-child(7){animation-delay:.32s}.st:nth-child(8){animation-delay:.37s}
+  @keyframes rise { from{ opacity:0; transform:translateY(14px) } to{ opacity:1; transform:none } }
+
+  /* ============================ type ============================ */
+  .eyebrow { font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-lo); }
+  .greeting { font-family:var(--font-voice); font-optical-sizing:auto; font-weight:500; font-size:33px; line-height:1.06; letter-spacing:-.01em; margin:6px 0 0; }
+  .meta { color:var(--ink-mid); font-size:14px; margin-top:8px; }
+  .section-h { font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-lo); margin:26px 0 12px; padding:0 22px; }
+
+  /* dawn wash behind the morning header */
+  .screen > .dawn-wash { position:absolute; top:0; left:0; right:0; height:280px; z-index:0; pointer-events:none;
+    background:radial-gradient(120% 90% at 70% -20%, rgba(255,160,110,.20), transparent 62%),
+               radial-gradient(90% 80% at 10% -10%, rgba(201,166,255,.12), transparent 60%); }
+  .screen > * { position:relative; z-index:1; }
+
+  /* ============================ cards ============================ */
+  .card {
+    background:var(--night-2); border:1px solid var(--hair);
+    border-radius:var(--r-card); padding:18px;
+    transition:transform .16s var(--ease-out), background .2s var(--ease-out);
+  }
+  .card.tap:active { transform:scale(.978); background:var(--night-3); }
+  .stack { display:flex; flex-direction:column; gap:13px; }
+
+  .row { display:flex; align-items:center; gap:12px; }
+  .grow { flex:1; min-width:0; }
+
+  /* dream entry pill */
+  .dream-pill {
+    display:flex; align-items:center; gap:13px; margin-top:20px;
+    background:linear-gradient(100deg, rgba(174,182,255,.13), rgba(201,166,255,.07));
+    border:1px solid rgba(174,182,255,.22); border-radius:var(--r-card); padding:14px 16px;
+    transition:transform .16s var(--ease-out);
+  }
+  .dream-pill:active { transform:scale(.98); }
+  .moon-dot { width:34px; height:34px; border-radius:50%; flex:none;
+    background:radial-gradient(circle at 32% 30%, #fff, var(--moon) 55%, #7e6bd6);
+    box-shadow:0 0 18px rgba(174,182,255,.5); }
+  .dream-pill .t { font-size:14px; font-weight:600; }
+  .dream-pill .s { font-size:12.5px; color:var(--ink-mid); margin-top:1px; }
+  .chev { color:var(--ink-lo); flex:none; }
+
+  /* the one thing — dawn hero */
+  .hero {
+    background:
+      linear-gradient(180deg, rgba(255,160,110,.12), rgba(255,160,110,.03)),
+      var(--night-2);
+    border:1px solid rgba(255,160,110,.30);
+    border-radius:var(--r-lg); padding:20px;
+    box-shadow:0 18px 50px -28px rgba(255,150,100,.55);
+  }
+  .hero .kicker { color:var(--dawn); font-weight:600; font-size:12px; letter-spacing:.12em; text-transform:uppercase; }
+  .hero h3 { font-family:var(--font-voice); font-weight:500; font-size:22px; line-height:1.12; margin:8px 0 0; letter-spacing:-.01em; }
+  .hero p { color:var(--ink-mid); font-size:14.5px; line-height:1.5; margin:9px 0 0; }
+
+  /* provenance chips */
+  .chips { display:flex; flex-wrap:wrap; gap:7px; margin-top:14px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:500;
+    padding:5px 10px; border-radius:var(--r-pill); background:rgba(255,255,255,.05);
+    border:1px solid var(--hair); color:var(--ink-mid); }
+  .chip .g { font-size:11px; }
+  .chip.cal{ color:var(--cal); border-color:rgba(255,194,122,.3); background:rgba(255,194,122,.08); }
+  .chip.mail{ color:var(--mail); border-color:rgba(255,154,168,.3); background:rgba(255,154,168,.08); }
+  .chip.read{ color:var(--read); border-color:rgba(201,166,255,.3); background:rgba(201,166,255,.08); }
+  .chip.web{ color:var(--web); border-color:rgba(127,224,214,.3); background:rgba(127,224,214,.08); }
+
+  /* buttons */
+  .btns { display:flex; gap:10px; margin-top:16px; }
+  .btn { flex:1; border:none; cursor:pointer; font-family:var(--font-ui); font-weight:600; font-size:14.5px;
+    padding:13px 16px; border-radius:14px; transition:transform .14s var(--ease-out), filter .2s var(--ease-out);
+    color:var(--ink-hi); background:rgba(255,255,255,.06); }
+  .btn:active { transform:scale(.97); }
+  .btn.primary { color:#2a1206; background:linear-gradient(180deg, var(--dawn), var(--dawn-2)); }
+  .btn.full { flex:none; width:100%; }
+  .btn.moon { color:#160f2e; background:linear-gradient(180deg, var(--moon), var(--moon-2)); }
+
+  /* generic proactive card */
+  .pc .lead { display:flex; align-items:flex-start; gap:11px; }
+  .pc .ico { width:30px; height:30px; border-radius:9px; flex:none; display:grid; place-items:center; font-size:15px; background:rgba(255,255,255,.05); border:1px solid var(--hair); }
+  .pc h4 { font-size:15.5px; font-weight:600; margin:1px 0 0; letter-spacing:-.01em; }
+  .pc p { color:var(--ink-mid); font-size:13.5px; line-height:1.45; margin:5px 0 0; }
+  .tag { display:inline-block; font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--ink-lo); background:rgba(255,255,255,.05); border:1px solid var(--hair); padding:3px 8px; border-radius:7px; margin-top:10px; }
+  .draft { margin-top:11px; padding:11px 13px; border-left:2px solid var(--mail);
+    background:rgba(255,255,255,.03); border-radius:0 10px 10px 0; font-family:var(--font-voice);
+    font-size:14px; color:var(--ink-hi); font-style:italic; }
+  .mini-btns { display:flex; gap:8px; margin-top:12px; }
+  .mini { font-family:var(--font-ui); font-weight:600; font-size:13px; padding:8px 14px; border-radius:10px; border:1px solid var(--hair-2);
+    background:rgba(255,255,255,.04); color:var(--ink-hi); cursor:pointer; transition:transform .14s var(--ease-out); }
+  .mini:active{ transform:scale(.96); }
+  .mini.solid{ background:rgba(255,154,168,.16); border-color:rgba(255,154,168,.35); color:#ffd7dd; }
+
+  /* ============================ tab bar ============================ */
+  .tabbar {
+    position:absolute; left:0; right:0; bottom:0; height:92px; z-index:50;
+    padding:10px 22px 26px; display:flex; align-items:center; justify-content:space-between;
+    background:linear-gradient(180deg, rgba(16,14,27,.2), rgba(16,14,27,.86));
+    backdrop-filter:blur(22px) saturate(140%); -webkit-backdrop-filter:blur(22px) saturate(140%);
+    border-top:1px solid var(--hair);
+  }
+  .tab { background:none; border:none; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px;
+    color:var(--ink-lo); font-family:var(--font-ui); font-size:10.5px; font-weight:600; width:54px;
+    transition:color .2s var(--ease-out), transform .14s var(--ease-out); }
+  .tab:active { transform:scale(.92); }
+  .tab.on { color:var(--ink-hi); }
+  .tab.on svg { stroke:var(--dawn); }
+  .tab svg { stroke:var(--ink-lo); transition:stroke .2s var(--ease-out); }
+  .fab { width:54px; height:46px; border-radius:16px; border:none; cursor:pointer; flex:none;
+    background:linear-gradient(180deg, var(--dawn), var(--dawn-2)); color:#2a1206;
+    display:grid; place-items:center; box-shadow:0 10px 24px -8px rgba(255,150,100,.7);
+    transition:transform .14s var(--ease-out); }
+  .fab:active { transform:scale(.93); }
+
+  .home-ind { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); width:134px; height:5px; border-radius:99px; background:rgba(255,255,255,.3); z-index:70; }
+
+  /* ============================ sheets ============================ */
+  .scrim { position:absolute; inset:0; background:rgba(4,3,9,.5); opacity:0; pointer-events:none; transition:opacity .3s var(--ease-out); z-index:80; }
+  .scrim.show { opacity:1; pointer-events:auto; }
+
+  .sheet { position:absolute; left:0; right:0; bottom:0; z-index:90;
+    transform:translateY(100%); transition:transform .44s var(--ease-drawer);
+    will-change:transform; }
+  .sheet.open { transform:translateY(0); }
+
+  /* full-screen Sleep takeover */
+  .sheet--full { top:0; background:
+      radial-gradient(120% 70% at 50% -6%, rgba(201,166,255,.22), transparent 58%),
+      radial-gradient(90% 50% at 80% 12%, rgba(127,140,255,.16), transparent 55%),
+      linear-gradient(180deg, #0c0a1a, #08070f);
+    overflow-y:auto; padding:0 0 40px; scrollbar-width:none; }
+  .sheet--full::-webkit-scrollbar{ display:none; }
+  .aura { position:absolute; top:-40px; left:50%; transform:translateX(-50%); width:320px; height:320px; z-index:0; pointer-events:none;
+    background:radial-gradient(circle, rgba(201,166,255,.5), rgba(127,140,255,.18) 45%, transparent 70%);
+    filter:blur(20px); animation:breathe 7s var(--ease-out) infinite; }
+  @keyframes breathe { 0%,100%{ opacity:.7; transform:translateX(-50%) scale(1) } 50%{ opacity:1; transform:translateX(-50%) scale(1.08) } }
+  .sheet--full .inner { position:relative; z-index:1; padding:64px 22px 0; }
+
+  .sleep-top { display:flex; justify-content:space-between; align-items:center; }
+  .sleep-top .lbl { font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--moon); font-weight:600; }
+  .x { width:34px; height:34px; border-radius:50%; border:1px solid var(--hair-2); background:rgba(255,255,255,.05);
+    color:var(--ink-hi); display:grid; place-items:center; cursor:pointer; transition:transform .14s var(--ease-out); }
+  .x:active{ transform:scale(.9); }
+
+  .sleep-h { font-family:var(--font-voice); font-weight:500; font-size:36px; line-height:1.04; letter-spacing:-.015em; margin:22px 0 0; }
+  .sleep-sub { color:var(--ink-mid); font-size:15px; line-height:1.5; margin:10px 0 0; }
+
+  .persona { font-family:var(--font-voice); font-style:italic; font-weight:400; font-size:18px; line-height:1.5;
+    color:var(--ink-hi); margin:22px 0 0; padding-left:16px; border-left:2px solid rgba(201,166,255,.5); }
+
+  .stats { display:flex; gap:8px; margin:22px 0 4px; }
+  .stat { flex:1; background:rgba(255,255,255,.04); border:1px solid var(--hair); border-radius:16px; padding:13px 10px; text-align:center; }
+  .stat b { display:block; font-family:var(--font-voice); font-weight:600; font-size:22px; line-height:1; }
+  .stat span { display:block; font-size:10.5px; color:var(--ink-lo); margin-top:6px; letter-spacing:.03em; }
+  .stat.win b { color:var(--dawn); }
+  .stat.win { background:rgba(255,160,110,.10); border-color:rgba(255,160,110,.3); }
+
+  /* belief */
+  .belief { background:var(--night-2); border:1px solid var(--hair); border-radius:var(--r-card); padding:16px 16px 14px; transition:filter .25s var(--ease-out), opacity .25s var(--ease-out); }
+  .belief__t { font-family:var(--font-voice); font-weight:500; font-size:18px; line-height:1.3; letter-spacing:-.01em; }
+  .belief__foot { display:flex; align-items:center; justify-content:space-between; margin-top:13px; gap:10px; }
+  .conf { display:flex; align-items:center; gap:8px; flex:1; }
+  .conf .bar { height:4px; border-radius:99px; background:rgba(255,255,255,.1); flex:1; overflow:hidden; max-width:96px; }
+  .conf .bar i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,var(--moon),var(--moon-2)); }
+  .conf .pct { font-size:11px; color:var(--ink-lo); font-weight:600; }
+  .fix { font-size:12px; font-weight:600; color:var(--ink-lo); background:none; border:none; cursor:pointer; padding:4px 6px; border-radius:8px; transition:transform .14s var(--ease-out), color .2s; }
+  .fix:active{ transform:scale(.94); } .fix:hover{ color:var(--moon); }
+
+  .revised-tag { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--moon); margin-bottom:9px; }
+  .diff .old { color:var(--ink-lo); text-decoration:line-through; text-decoration-color:rgba(255,255,255,.3); font-family:var(--font-voice); font-size:15px; }
+  .diff .arrow { color:var(--ink-lo); margin:2px 0; font-size:12px; }
+  .diff .new { color:var(--ink-hi); font-family:var(--font-voice); font-weight:500; font-size:18px; line-height:1.3; }
+
+  /* cross-surface insight — the thesis card */
+  .insight { position:relative; border-radius:var(--r-lg); padding:18px; margin-top:2px;
+    background:linear-gradient(160deg, rgba(201,166,255,.16), rgba(127,140,255,.06)), var(--night-2);
+    border:1px solid rgba(201,166,255,.4);
+    box-shadow:0 20px 60px -30px rgba(174,182,255,.7); }
+  .insight .lk { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--moon); }
+  .insight h3 { font-family:var(--font-voice); font-weight:500; font-size:21px; line-height:1.16; letter-spacing:-.01em; margin:11px 0 0; }
+  .insight .why { color:var(--ink-mid); font-size:13.5px; line-height:1.5; margin:10px 0 0; }
+  .insight .why b { color:var(--ink-hi); font-weight:600; }
+
+  .belief.fixed { filter:blur(2px); opacity:.5; }
+  .fixed-note { font-family:var(--font-voice); font-style:italic; color:var(--moon); font-size:15px; text-align:center; padding:6px; }
+
+  /* ============================ Talk ============================ */
+  .talk-h { font-family:var(--font-voice); font-weight:500; font-size:26px; margin:0; }
+  .bubbles { display:flex; flex-direction:column; gap:14px; margin-top:18px; }
+  .b { max-width:82%; padding:13px 16px; font-size:15px; line-height:1.45; }
+  .b.nidra { align-self:flex-start; background:var(--night-2); border:1px solid var(--hair); border-radius:20px 20px 20px 6px;
+    font-family:var(--font-voice); color:var(--ink-hi); }
+  .b.me { align-self:flex-end; color:#2a1206; border-radius:20px 20px 6px 20px;
+    background:linear-gradient(180deg, var(--dawn), var(--dawn-2)); font-weight:500; }
+  .did { align-self:flex-start; display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--web); font-weight:600;
+    background:rgba(127,224,214,.08); border:1px solid rgba(127,224,214,.25); padding:7px 12px; border-radius:12px; }
+  .composer { position:absolute; left:0; right:0; bottom:92px; z-index:40; padding:10px 16px 12px;
+    background:linear-gradient(180deg, transparent, var(--night-1) 30%); display:flex; gap:10px; align-items:center; }
+  .composer .field { flex:1; height:46px; border-radius:23px; border:1px solid var(--hair-2); background:rgba(255,255,255,.05);
+    display:flex; align-items:center; padding:0 18px; color:var(--ink-lo); font-size:15px; }
+  .composer .mic { width:46px; height:46px; border-radius:50%; flex:none; border:none; cursor:pointer; display:grid; place-items:center;
+    background:linear-gradient(180deg,var(--moon),var(--moon-2)); color:#160f2e; transition:transform .14s var(--ease-out); }
+  .composer .mic:active{ transform:scale(.92); }
+
+  /* ============================ You ============================ */
+  .you-hero { display:flex; flex-direction:column; align-items:center; text-align:center; padding-top:8px; }
+  .orb { width:96px; height:96px; border-radius:50%; position:relative;
+    background:radial-gradient(circle at 36% 30%, #fff, var(--moon) 42%, #6f5fd0 80%);
+    box-shadow:0 0 50px -6px rgba(174,182,255,.6); }
+  .orb::after{ content:""; position:absolute; inset:-12px; border-radius:50%; border:1px solid rgba(201,166,255,.3); animation:breathe 6s var(--ease-out) infinite; }
+  .you-hero h2 { font-family:var(--font-voice); font-weight:500; font-size:27px; margin:16px 0 0; }
+  .you-hero p { color:var(--ink-mid); font-size:13.5px; margin:7px 22px 0; line-height:1.5; }
+  .ints { display:flex; flex-wrap:wrap; gap:8px; padding:0 22px; }
+  .int { font-size:13px; font-weight:500; padding:8px 13px; border-radius:var(--r-pill); border:1px solid var(--hair-2); background:rgba(255,255,255,.04); color:var(--ink-hi); }
+  .int.hot { border-color:rgba(201,166,255,.4); background:rgba(201,166,255,.1); color:#e3d6ff; }
+  .person { display:flex; align-items:center; gap:13px; }
+  .av { width:42px; height:42px; border-radius:50%; flex:none; display:grid; place-items:center; font-family:var(--font-voice); font-weight:600; color:#160f2e; }
+
+  /* capture action sheet */
+  .sheet--action { padding:0 12px 14px; }
+  .sheet--action .panel { background:#1b1830; border:1px solid var(--hair-2); border-radius:26px; overflow:hidden; }
+  .grab { width:38px; height:5px; border-radius:99px; background:rgba(255,255,255,.22); margin:10px auto 4px; }
+  .cap-h { text-align:center; font-family:var(--font-voice); font-size:18px; padding:8px 0 4px; }
+  .cap-row { display:flex; align-items:center; gap:14px; padding:15px 18px; border-top:1px solid var(--hair); cursor:pointer; transition:background .15s; }
+  .cap-row:active{ background:var(--night-3); }
+  .cap-row .ci { width:38px; height:38px; border-radius:11px; display:grid; place-items:center; font-size:17px; flex:none; }
+  .cap-row .ct b { font-size:15px; font-weight:600; } .cap-row .ct span{ display:block; font-size:12.5px; color:var(--ink-mid); margin-top:1px; }
+  .cancel { width:100%; margin-top:8px; padding:15px; border-radius:20px; border:none; background:#1b1830; color:var(--ink-hi); font-family:var(--font-ui); font-weight:600; font-size:16px; cursor:pointer; }
+
+  /* ===== companion: presence + life-threads + drill-down ===== */
+  .note { font-family:var(--font-voice); font-size:17px; line-height:1.52; color:var(--ink-hi); margin:12px 0 0; }
+  .thread { display:flex; align-items:flex-start; gap:13px; background:var(--night-2); border:1px solid var(--hair);
+    border-radius:var(--r-card); padding:15px; cursor:pointer; transition:transform .16s var(--ease-out), background .2s var(--ease-out); }
+  .thread:active { transform:scale(.985); background:var(--night-3); }
+  .t-ico { font-size:21px; width:42px; height:42px; border-radius:13px; display:grid; place-items:center; background:rgba(255,255,255,.05); border:1px solid var(--hair); flex:none; }
+  .t-name { font-size:15.5px; font-weight:600; letter-spacing:-.01em; display:block; }
+  .t-say { font-family:var(--font-voice); font-size:14.5px; line-height:1.45; color:var(--ink-mid); display:block; margin-top:4px; }
+  .thread .chev { align-self:center; }
+  .mlabel { font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-lo); margin:24px 0 12px; }
+  .sub-top { display:flex; align-items:center; justify-content:space-between; padding:0 18px 8px; }
+  .sub-lbl { font-size:13.5px; font-weight:600; letter-spacing:.03em; color:var(--ink-mid); }
+  .back { width:34px; height:34px; border-radius:50%; border:1px solid var(--hair-2); background:rgba(255,255,255,.05);
+    color:var(--ink-hi); display:grid; place-items:center; cursor:pointer; font-size:20px; line-height:1; padding-bottom:3px;
+    transition:transform .14s var(--ease-out); }
+  .back:active{ transform:scale(.9); }
+  .talk-inline { margin-top:22px; min-height:48px; border-radius:24px; border:1px solid var(--hair-2); background:rgba(255,255,255,.05);
+    display:flex; align-items:center; gap:10px; padding:12px 16px; color:var(--ink-lo); font-size:14.5px; cursor:pointer;
+    transition:transform .14s var(--ease-out); }
+  .talk-inline:active{ transform:scale(.99); }
+  .photo { height:172px; border-radius:var(--r-lg); background:linear-gradient(150deg,#2a2440,#3a2e52 50%,#5b4a72);
+    position:relative; overflow:hidden; border:1px solid var(--hair); }
+  .photo::after{ content:"🏯"; position:absolute; inset:0; display:grid; place-items:center; font-size:54px; opacity:.45; }
+  .d-row { display:flex; align-items:center; justify-content:space-between; background:var(--night-2); border:1px solid var(--hair); border-radius:14px; padding:13px 15px; }
+  .d-row span{ color:var(--ink-lo); font-size:13.5px; } .d-row b{ font-size:14px; font-weight:600; }
+
+  @media (prefers-reduced-motion:reduce){
+    .screen,.sheet,.st,.aura,.orb::after{ animation:none!important; transition-duration:.01ms!important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================= -->
+<!-- helper: status bar markup is repeated, kept tiny               -->
+<!-- ============================================================= -->
+
+<div class="shot">
+  <div class="phone" id="phone">
+    <div class="island"></div>
+    <div class="sb">
+      <span>7:02</span>
+      <span class="right">
+        <svg width="18" height="12" viewBox="0 0 18 12" fill="none"><rect x="0" y="7" width="3" height="5" rx="1" fill="#F4F0E8"/><rect x="5" y="4" width="3" height="8" rx="1" fill="#F4F0E8"/><rect x="10" y="2" width="3" height="10" rx="1" fill="#F4F0E8"/><rect x="15" y="0" width="3" height="12" rx="1" fill="#F4F0E8"/></svg>
+        <svg width="17" height="12" viewBox="0 0 17 12" fill="none"><path d="M8.5 2.5C11 2.5 13.2 3.5 14.8 5.1L8.5 11.4 2.2 5.1C3.8 3.5 6 2.5 8.5 2.5Z" fill="#F4F0E8"/></svg>
+        <svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1" width="21" height="11" rx="3" stroke="#F4F0E8" stroke-opacity=".5"/><rect x="3" y="3" width="16" height="7" rx="1.5" fill="#F4F0E8"/><rect x="23" y="4.5" width="2" height="4" rx="1" fill="#F4F0E8" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="screens">
+      <!-- ===================== TODAY ===================== -->
+      <section class="screen active" id="today">
+        <div class="dawn-wash"></div>
+        <div class="pad st">
+          <div class="eyebrow">Friday · June 27</div>
+          <h1 class="greeting">Morning, Ishaan.</h1>
+          <p class="note">I've been keeping an eye on a few of your things. Tokyo's coming together, and Thursday's review is the one to protect — want to get into any of it?</p>
+        </div>
+
+        <div class="pad st">
+          <div class="dream-pill" onclick="openSleep()">
+            <span class="moon-dot"></span>
+            <span class="grow">
+              <span class="t">I did some thinking while you slept</span>
+              <span class="s">Tap to see what I came to understand about you</span>
+            </span>
+            <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+
+        <div class="section-h st">On your mind lately</div>
+        <div class="pad stack">
+          <div class="thread st" onclick="openThread('tokyo')">
+            <span class="t-ico">🗾</span>
+            <span class="grow"><span class="t-name">Your Tokyo trip</span><span class="t-say">It's starting to look real — I found a ryokan in Kyoto I think you'll love.</span></span>
+            <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </div>
+          <div class="thread st" onclick="openThread('tokyo')">
+            <span class="t-ico">🏛️</span>
+            <span class="grow"><span class="t-name">Thursday's review</span><span class="t-say">The big one this week. I'm holding your afternoon and lining up what you'll need.</span></span>
+            <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </div>
+          <div class="thread st" onclick="openThread('tokyo')">
+            <span class="t-ico">📚</span>
+            <span class="grow"><span class="t-name">What you're reading</span><span class="t-say">You're deep in consensus protocols — I set aside the one paper actually worth your time.</span></span>
+            <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </div>
+          <div class="thread st" onclick="openThread('tokyo')">
+            <span class="t-ico">💬</span>
+            <span class="grow"><span class="t-name">Priya's waiting on you</span><span class="t-say">I drafted a reply in your voice — short and casual. Just say the word.</span></span>
+            <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== TALK ===================== -->
+      <section class="screen" id="talk">
+        <div class="pad">
+          <h1 class="talk-h st">Nidra</h1>
+          <div class="bubbles">
+            <div class="b nidra st">Morning. Want me to set up the design-team sync before you get pulled into other things?</div>
+            <div class="b me st">yeah do it, thursday works</div>
+            <div class="did st">✓ Booked Thu 3:00–3:30pm — after your no-meetings-before-2 rule</div>
+            <div class="b nidra st">Done. I drafted the heads-up too — short and casual, the way you write. Want it on Telegram as well?</div>
+            <div class="b me st">perfect, yes</div>
+            <div class="did st">✓ Sent to the team chat · same voice everywhere</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== YOU ===================== -->
+      <section class="screen" id="you">
+        <div class="pad you-hero st">
+          <div class="orb"></div>
+          <h2>You, as I understand you</h2>
+          <p>Built from 1 day · 4 surfaces · 12 signals. Every belief is yours to correct.</p>
+        </div>
+
+        <div class="section-h st">What I believe about you</div>
+        <div class="pad stack">
+          <div class="belief tap st">
+            <div class="belief__t">No meetings before 2pm — mornings are for deep work.</div>
+            <div class="belief__foot"><div class="conf"><div class="bar"><i style="width:92%"></i></div><span class="pct">92%</span></div>
+              <span class="chip cal" style="margin:0"><span class="g">📅</span>Calendar</span></div>
+          </div>
+          <div class="belief tap st">
+            <div class="belief__t">Writes short and casual — no greeting, no sign-off.</div>
+            <div class="belief__foot"><div class="conf"><div class="bar"><i style="width:84%"></i></div><span class="pct">84%</span></div>
+              <span class="chip mail" style="margin:0"><span class="g">✉️</span>Email</span></div>
+          </div>
+        </div>
+
+        <div class="section-h st">What you're into</div>
+        <div class="pad ints st">
+          <span class="int hot">Distributed systems</span>
+          <span class="int hot">Japan travel</span>
+          <span class="int">Primary sources</span>
+          <span class="int">Consensus protocols</span>
+          <span class="int">Ryokan / onsen</span>
+        </div>
+
+        <div class="section-h st">People in your orbit</div>
+        <div class="pad stack">
+          <div class="card person tap st">
+            <span class="av" style="background:linear-gradient(180deg,var(--mail),#d96f81)">P</span>
+            <span class="grow"><b style="font-size:15px">Priya</b><div style="font-size:12.5px;color:var(--ink-mid)">Teammate · you reply to her fastest</div></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== THREAD (zoom level 1) ===================== -->
+      <section class="screen" id="thread">
+        <div class="sub-top">
+          <button class="back" onclick="showScreen('today', homeTab())">‹</button>
+          <span class="sub-lbl">🗾 Tokyo trip</span>
+          <span style="width:34px"></span>
+        </div>
+        <div class="pad">
+          <h1 class="greeting st" style="font-size:29px">Your Tokyo trip</h1>
+          <p class="note st">Spring, mid-range, and you lean compact and walkable. Here's where it stands — I can take it the rest of the way whenever you want.</p>
+
+          <div class="mlabel st">What I've gathered for you</div>
+          <div class="stack">
+            <div class="thread st" onclick="openDetail()">
+              <span class="t-ico">🏠</span>
+              <span class="grow"><span class="t-name">A ryokan in Kyoto</span><span class="t-say">Walkable, private onsen, mid-range. It feels like you.</span></span>
+              <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <div class="thread st" onclick="openDetail()">
+              <span class="t-ico">✈️</span>
+              <span class="grow"><span class="t-name">Flights</span><span class="t-say">A couple of good options, around $900 round trip.</span></span>
+              <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <div class="thread st" onclick="openDetail()">
+              <span class="t-ico">🚄</span>
+              <span class="grow"><span class="t-name">JR Pass</span><span class="t-say">Worth it for your route — I did the math.</span></span>
+              <svg class="chev" width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M1.5 1.5L7 7.5L1.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+          </div>
+
+          <div class="insight st" style="margin-top:18px">
+            <span class="lk">🔗 Something I noticed</span>
+            <h3>You keep drifting toward Kyoto, not just Tokyo.</h3>
+            <p class="why">Your reading and the spots you saved lean <b>temples and quiet</b> over nightlife. I'll weight Kyoto when I plan your days.</p>
+          </div>
+
+          <button class="btn moon full st" style="margin-top:18px">Pull the whole trip together →</button>
+
+          <div class="talk-inline st" onclick="showScreen('talk', document.querySelectorAll('.tab')[1])">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8 8 0 0 1-11.5 7.2L4 20l1.3-5A8 8 0 1 1 21 11.5z"/></svg>
+            Ask me anything about Tokyo…
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== DETAIL (zoom level 2) ===================== -->
+      <section class="screen" id="detail">
+        <div class="sub-top">
+          <button class="back" onclick="showScreen('thread', homeTab())">‹</button>
+          <span class="sub-lbl">The ryokan</span>
+          <span style="width:34px"></span>
+        </div>
+        <div class="pad">
+          <div class="photo st"></div>
+          <h1 class="greeting st" style="font-size:25px; margin-top:16px">Tsubaki-an, Kyoto</h1>
+          <p class="note st">A small ryokan in Higashiyama — a few minutes from the temples, with a private onsen. I picked it because it matches how you travel: quiet, compact, a little special, never flashy.</p>
+          <div class="stack st" style="margin-top:16px">
+            <div class="d-row"><span>Around</span><b>$180 / night</b></div>
+            <div class="d-row"><span>Where</span><b>Higashiyama · walkable</b></div>
+            <div class="d-row"><span>Why you</span><b>Onsen · quiet · compact</b></div>
+          </div>
+          <div class="btns st">
+            <button class="btn primary">Save it</button>
+            <button class="btn">Show me others</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- composer — pinned to the phone, shown only on Talk -->
+    <div class="composer" id="composer" style="display:none">
+      <div class="field">Tell me anything…</div>
+      <button class="mic">
+        <svg width="18" height="22" viewBox="0 0 18 22" fill="none"><rect x="6" y="1" width="6" height="12" rx="3" fill="#160f2e"/><path d="M2 10a7 7 0 0 0 14 0M9 17v4" stroke="#160f2e" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <!-- ===================== TAB BAR ===================== -->
+    <nav class="tabbar">
+      <button class="tab on" data-t="today" onclick="go('today',this)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>
+        Home
+      </button>
+      <button class="tab" data-t="talk" onclick="go('talk',this)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8 8 0 0 1-11.5 7.2L4 20l1.3-5A8 8 0 1 1 21 11.5z"/></svg>
+        Talk
+      </button>
+      <button class="fab" onclick="openCapture()" aria-label="Capture">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2a1206" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="tab" data-t="you" onclick="go('you',this)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"/></svg>
+        You
+      </button>
+      <button class="tab" data-t="connect" onclick="go('today',this)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12a3 3 0 0 0 3 3M9.5 7.5l2-2a4 4 0 0 1 6 6l-2 2M14.5 16.5l-2 2a4 4 0 0 1-6-6l2-2"/></svg>
+        Connect
+      </button>
+    </nav>
+
+    <!-- ===================== SLEEP RECAP (full sheet) ===================== -->
+    <div class="scrim" id="scrim"></div>
+    <div class="sheet sheet--full" id="sleep">
+      <div class="aura"></div>
+      <div class="inner">
+        <div class="sleep-top">
+          <span class="lbl">🌙 Tonight's dream</span>
+          <button class="x" onclick="closeSleep()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 12 12 2M2 2l10 10" stroke="#F4F0E8" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <h1 class="sleep-h st">While you slept,<br/>I thought about you.</h1>
+        <p class="sleep-sub st">I replayed your whole day across four surfaces and updated how I understand you.</p>
+
+        <p class="persona st">A hands-on engineer deep in distributed systems, quietly planning a spring trip to Japan. Values their mornings, their time, and a straight answer.</p>
+
+        <div class="stats st">
+          <div class="stat"><b>5</b><span>BELIEFS</span></div>
+          <div class="stat"><b>1</b><span>REVISED</span></div>
+          <div class="stat win"><b>↓62%</b><span>CORRECTIONS</span></div>
+        </div>
+
+        <div class="section-h" style="padding:0; margin:26px 0 12px">The connection I made</div>
+        <div class="insight st">
+          <span class="lk">🔗 Cross-surface insight</span>
+          <h3>You're prepping an architecture decision — not just reading.</h3>
+          <p class="why"><b>Consensus papers</b> you finished (📖) + <b>Thursday afternoon</b> you blocked (📅) + a <b>"design review"</b> email thread (✉️) all point the same way. No single surface could see it. I'll hold Thursday and surface the Raft paper first.</p>
+        </div>
+
+        <div class="section-h" style="padding:0; margin:26px 0 12px">What I learned</div>
+        <div class="stack">
+          <div class="belief st" id="bel-revised">
+            <span class="revised-tag">↻ Revised tonight</span>
+            <div class="diff">
+              <div class="old">Wants detailed, thorough write-ups.</div>
+              <div class="arrow">↓</div>
+              <div class="new">Wants the short version — 3 bullets, no preamble.</div>
+            </div>
+            <div class="belief__foot">
+              <div class="conf"><div class="bar"><i style="width:88%"></i></div><span class="pct">88%</span></div>
+              <button class="fix" onclick="correct('bel-revised')">that's not right</button>
+            </div>
+          </div>
+
+          <div class="belief st" id="bel-2">
+            <div class="belief__t">Trusts primary sources — bounced off a "Top-10 tips" listicle at 20%.</div>
+            <div class="belief__foot">
+              <div class="conf"><div class="bar"><i style="width:79%"></i></div><span class="pct">79%</span></div>
+              <button class="fix" onclick="correct('bel-2')">that's not right</button>
+            </div>
+          </div>
+
+          <div class="belief st" id="bel-3">
+            <div class="belief__t">Mid-range and practical — leans compact and walkable over flashy.</div>
+            <div class="belief__foot">
+              <div class="conf"><div class="bar"><i style="width:71%"></i></div><span class="pct">71%</span></div>
+              <button class="fix" onclick="correct('bel-3')">that's not right</button>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn moon full st" style="margin-top:26px" onclick="closeSleep()">Start the day →</button>
+        <p style="text-align:center; color:var(--ink-lo); font-size:12.5px; margin:14px 0 0">These are my guesses. Correct anything — I'll rethink it tonight.</p>
+      </div>
+    </div>
+
+    <!-- ===================== CAPTURE (action sheet) ===================== -->
+    <div class="sheet sheet--action" id="capture">
+      <div class="panel">
+        <div class="grab"></div>
+        <div class="cap-h">Add to Nidra</div>
+        <div class="cap-row"><span class="ci" style="background:rgba(201,166,255,.14)">🎙️</span><span class="ct"><b>Say something</b><span>A thought, a reminder, out loud</span></span></div>
+        <div class="cap-row"><span class="ci" style="background:rgba(127,224,214,.14)">📸</span><span class="ct"><b>Capture a screenshot</b><span>I'll read it — no URL needed</span></span></div>
+        <div class="cap-row"><span class="ci" style="background:rgba(255,194,122,.14)">🔗</span><span class="ct"><b>Share a link</b><span>"Remember this" / "add to my trip"</span></span></div>
+        <div class="cap-row"><span class="ci" style="background:rgba(255,154,168,.14)">✏️</span><span class="ct"><b>Jot a note</b><span>Type it, I'll file it</span></span></div>
+      </div>
+      <button class="cancel" onclick="closeCapture()">Cancel</button>
+    </div>
+
+    <div class="home-ind"></div>
+  </div>
+  <div class="cap">Tap through it — Today · the dream pill opens Sleep · the + opens Capture · "that's not right" shows the correction loop</div>
+</div>
+
+<script>
+  function showScreen(id, tabEl){
+    document.querySelectorAll('.screen').forEach(s=>{ s.classList.remove('active'); s.scrollTop=0; });
+    var t = document.getElementById(id); if(t){ t.classList.add('active'); t.scrollTop=0; }
+    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+    if(tabEl) tabEl.classList.add('on');
+    document.getElementById('composer').style.display = (id==='talk') ? 'flex' : 'none';
+  }
+  function go(id, el){ showScreen(id, el); }
+  function homeTab(){ return document.querySelector('.tab'); }
+  function openThread(id){ showScreen('thread', homeTab()); }
+  function openDetail(){ showScreen('detail', homeTab()); }
+  var scrim = document.getElementById('scrim');
+  function openSleep(){ document.getElementById('sleep').classList.add('open'); scrim.classList.add('show'); }
+  function closeSleep(){ document.getElementById('sleep').classList.remove('open'); scrim.classList.remove('show'); }
+  function openCapture(){ document.getElementById('capture').classList.add('open'); scrim.classList.add('show'); }
+  function closeCapture(){ document.getElementById('capture').classList.remove('open'); scrim.classList.remove('show'); }
+  scrim.addEventListener('click', function(){ closeSleep(); closeCapture(); });
+
+  // the correction loop, made tactile: blur-to-mask -> confirm
+  function correct(id){
+    var el = document.getElementById(id);
+    el.classList.add('fixed');
+    setTimeout(function(){
+      el.innerHTML = '<div class="fixed-note">Got it — I\'ll rethink this tonight. 🌙</div>';
+      el.classList.remove('fixed');
+    }, 260);
+  }
+</script>
+</body>
+</html>

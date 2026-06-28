@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Nidra V2 mobile mocks</title>
+<style>
+  :root {
+    --page: #08090c;
+    --paper: #f6f1e8;
+    --paper-2: #d9cec1;
+    --paper-3: #9d9389;
+    --ink: #161412;
+    --night: #0c0d12;
+    --night-2: #15151d;
+    --night-3: #201d24;
+    --line: rgba(255, 246, 234, .14);
+    --line-strong: rgba(255, 246, 234, .24);
+    --glass: rgba(20, 20, 26, .58);
+    --glass-2: rgba(255, 246, 234, .08);
+    --dawn: #f4b277;
+    --dawn-2: #f28b68;
+    --sage: #83c4a1;
+    --blue: #97aee8;
+    --rose: #d98aa5;
+    --aqua: #7cc8cb;
+    --radius: 26px;
+    --ease: cubic-bezier(.22, 1, .36, 1);
+    color-scheme: dark;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, system-ui, sans-serif;
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  html,
+  body {
+    margin: 0;
+    min-height: 100%;
+    background:
+      radial-gradient(circle at 18% 14%, rgba(131, 196, 161, .14), transparent 32rem),
+      radial-gradient(circle at 84% 20%, rgba(151, 174, 232, .12), transparent 30rem),
+      radial-gradient(circle at 46% 100%, rgba(242, 139, 104, .13), transparent 34rem),
+      var(--page);
+    color: var(--paper);
+  }
+
+  body {
+    padding: 30px clamp(18px, 3vw, 42px) 44px;
+  }
+
+  button {
+    font: inherit;
+  }
+
+  .board-head {
+    width: min(1760px, 100%);
+    margin: 0 auto 22px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 22px;
+    align-items: end;
+  }
+
+  .board-kicker {
+    margin: 0 0 8px;
+    color: var(--dawn);
+    font-size: 12px;
+    font-weight: 760;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 0;
+    max-width: 760px;
+    font-size: clamp(34px, 4.4vw, 68px);
+    line-height: .94;
+    letter-spacing: -.045em;
+  }
+
+  .board-note {
+    margin: 12px 0 0;
+    max-width: 780px;
+    color: var(--paper-2);
+    font-size: 16px;
+    line-height: 1.48;
+  }
+
+  .audit {
+    width: min(450px, 100%);
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: rgba(255, 246, 234, .06);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09);
+  }
+
+  .audit b {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--paper);
+    font-size: 13px;
+  }
+
+  .audit p {
+    margin: 0;
+    color: var(--paper-3);
+    font-size: 13px;
+    line-height: 1.42;
+  }
+
+  .mock-grid {
+    width: min(1760px, 100%);
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(330px, 1fr));
+    gap: 18px;
+    align-items: start;
+  }
+
+  .mock {
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+  }
+
+  .caption {
+    width: min(390px, 100%);
+    color: var(--paper-3);
+    font-size: 13px;
+    line-height: 1.44;
+  }
+
+  .caption b {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--paper);
+    font-size: 12px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  .phone {
+    position: relative;
+    width: 390px;
+    height: 844px;
+    max-width: calc(100vw - 36px);
+    border-radius: 54px;
+    overflow: hidden;
+    background: var(--night);
+    color: var(--paper);
+    box-shadow:
+      0 0 0 11px #09090d,
+      0 0 0 12px rgba(255, 255, 255, .12),
+      0 42px 110px rgba(0, 0, 0, .62);
+    isolation: isolate;
+  }
+
+  .phone:before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, rgba(10, 10, 14, .28), rgba(10, 10, 14, .78)),
+      radial-gradient(circle at 18% 16%, rgba(244, 178, 119, .18), transparent 17rem),
+      radial-gradient(circle at 86% 28%, rgba(151, 174, 232, .16), transparent 15rem),
+      radial-gradient(circle at 54% 88%, rgba(124, 200, 203, .13), transparent 18rem);
+  }
+
+  .phone.memory:before {
+    background:
+      linear-gradient(180deg, rgba(6, 6, 9, .22), rgba(6, 6, 9, .84) 74%),
+      url("../frontend/public/nidra/memory-field.png") center / cover no-repeat;
+    filter: saturate(.92) contrast(1.02);
+  }
+
+  .phone.trip-photo:before {
+    background:
+      linear-gradient(180deg, rgba(9, 9, 12, .24), rgba(9, 9, 12, .9) 58%),
+      url("https://picsum.photos/seed/kyoto-nidra-v2/780/1100") center / cover no-repeat;
+    filter: saturate(.9) contrast(1.03);
+  }
+
+  .phone.trip-plan:before {
+    background:
+      linear-gradient(180deg, rgba(9, 9, 12, .2), rgba(9, 9, 12, .88) 58%),
+      url("https://picsum.photos/seed/tokyo-rain-nidra/780/1100") center / cover no-repeat;
+    filter: saturate(.86) contrast(1.04);
+  }
+
+  .island {
+    position: absolute;
+    z-index: 40;
+    top: 11px;
+    left: 50%;
+    width: 122px;
+    height: 34px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: #010101;
+  }
+
+  .status {
+    position: absolute;
+    z-index: 30;
+    inset: 0 0 auto;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 17px 30px 0;
+    color: rgba(255, 251, 242, .92);
+    font-size: 14px;
+    font-weight: 720;
+    pointer-events: none;
+  }
+
+  .status-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .signal {
+    width: 17px;
+    height: 12px;
+    background:
+      linear-gradient(to top, currentColor 0 42%, transparent 42%) 0 0 / 3px 100%,
+      linear-gradient(to top, currentColor 0 58%, transparent 58%) 5px 0 / 3px 100%,
+      linear-gradient(to top, currentColor 0 76%, transparent 76%) 10px 0 / 3px 100%,
+      linear-gradient(to top, currentColor 0 100%, transparent 100%) 15px 0 / 3px 100%;
+    background-repeat: no-repeat;
+  }
+
+  .battery {
+    position: relative;
+    width: 25px;
+    height: 12px;
+    border: 1px solid rgba(255, 255, 255, .62);
+    border-radius: 4px;
+  }
+
+  .battery:before {
+    content: "";
+    position: absolute;
+    inset: 2px 5px 2px 2px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+
+  .battery:after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: -4px;
+    width: 2px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .54);
+  }
+
+  .screen {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    padding: 63px 18px 22px;
+  }
+
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    min-height: 42px;
+  }
+
+  .brand {
+    justify-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 13px;
+    border: 1px solid rgba(255, 246, 234, .13);
+    border-radius: 999px;
+    background: rgba(10, 10, 14, .38);
+    color: rgba(255, 251, 242, .94);
+    font-size: 14px;
+    font-weight: 760;
+    backdrop-filter: blur(22px) saturate(145%);
+  }
+
+  .brand-mark {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--dawn);
+    box-shadow: 0 0 18px rgba(244, 178, 119, .8);
+  }
+
+  .chip-btn {
+    justify-self: start;
+    min-height: 40px;
+    border: 1px solid rgba(255, 246, 234, .13);
+    border-radius: 999px;
+    background: rgba(255, 246, 234, .07);
+    color: rgba(255, 251, 242, .88);
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 730;
+    backdrop-filter: blur(18px);
+  }
+
+  .chip-btn.right {
+    justify-self: end;
+  }
+
+  .hero-copy {
+    margin-top: 30px;
+    max-width: 330px;
+  }
+
+  .soft-label {
+    margin: 0;
+    color: rgba(255, 246, 234, .66);
+    font-size: 13px;
+    font-weight: 720;
+  }
+
+  .hero-copy h2,
+  .sheet-title,
+  .model-title {
+    margin: 8px 0 0;
+    color: #fff9ef;
+    font-size: 38px;
+    line-height: .98;
+    letter-spacing: -.035em;
+  }
+
+  .hero-copy p {
+    margin: 12px 0 0;
+    color: rgba(255, 246, 234, .76);
+    font-size: 15.5px;
+    line-height: 1.44;
+  }
+
+  .moves {
+    display: grid;
+    gap: 10px;
+    margin-top: auto;
+    padding-bottom: 74px;
+  }
+
+  .move-card {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid rgba(255, 246, 234, .15);
+    border-radius: 24px;
+    background:
+      linear-gradient(135deg, rgba(255, 246, 234, .13), rgba(255, 246, 234, .045)),
+      rgba(12, 12, 16, .54);
+    backdrop-filter: blur(28px) saturate(146%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12);
+  }
+
+  .move-card.primary {
+    border-color: rgba(244, 178, 119, .36);
+    background:
+      radial-gradient(circle at 22% 0%, rgba(244, 178, 119, .26), transparent 13rem),
+      linear-gradient(135deg, rgba(255, 246, 234, .16), rgba(255, 246, 234, .06)),
+      rgba(18, 17, 19, .68);
+  }
+
+  .move-card h3,
+  .choice h3,
+  .route-card h3,
+  .belief-card h3 {
+    margin: 0;
+    color: #fff9ef;
+    font-size: 17px;
+    line-height: 1.14;
+  }
+
+  .move-card p,
+  .choice p,
+  .route-card p,
+  .belief-card p {
+    margin: 6px 0 0;
+    color: rgba(255, 246, 234, .65);
+    font-size: 13px;
+    line-height: 1.38;
+  }
+
+  .move-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: space-between;
+    color: rgba(255, 246, 234, .62);
+    font-size: 11px;
+    font-weight: 720;
+  }
+
+  .source-stack {
+    display: inline-flex;
+  }
+
+  .source-stack span {
+    width: 18px;
+    height: 18px;
+    margin-left: -5px;
+    border: 1px solid rgba(255, 246, 234, .28);
+    border-radius: 999px;
+    background: var(--blue);
+  }
+
+  .source-stack span:first-child {
+    margin-left: 0;
+    background: var(--dawn);
+  }
+
+  .source-stack span:last-child {
+    background: var(--sage);
+  }
+
+  .bottom-nav {
+    position: absolute;
+    z-index: 12;
+    left: 18px;
+    right: 18px;
+    bottom: 18px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 7px;
+    padding: 7px;
+    border: 1px solid rgba(255, 246, 234, .14);
+    border-radius: 999px;
+    background: rgba(13, 13, 18, .68);
+    backdrop-filter: blur(26px) saturate(145%);
+  }
+
+  .nav-item {
+    min-height: 42px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(255, 246, 234, .54);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .nav-item.active {
+    background: rgba(255, 246, 234, .13);
+    color: var(--paper);
+  }
+
+  .sheet {
+    position: absolute;
+    z-index: 6;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 90%;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 18px 23px;
+    border: 1px solid rgba(255, 246, 234, .15);
+    border-radius: 34px 34px 0 0;
+    background:
+      linear-gradient(180deg, rgba(29, 27, 32, .86), rgba(13, 13, 17, .98)),
+      rgba(15, 15, 19, .94);
+    box-shadow: 0 -26px 80px rgba(0, 0, 0, .48);
+    backdrop-filter: blur(34px) saturate(150%);
+  }
+
+  .sheet.tight {
+    height: 92%;
+  }
+
+  .grab {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 5px;
+    margin: 0 auto 15px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .26);
+  }
+
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .sheet-head span {
+    color: rgba(255, 246, 234, .68);
+    font-size: 13px;
+    font-weight: 760;
+  }
+
+  .round-btn {
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(255, 246, 234, .15);
+    border-radius: 999px;
+    background: rgba(255, 246, 234, .07);
+    color: var(--paper);
+  }
+
+  .sheet-title {
+    max-width: 328px;
+    font-size: 33px;
+  }
+
+  .sheet-sub {
+    margin: 10px 0 0;
+    color: rgba(255, 246, 234, .72);
+    font-size: 15px;
+    line-height: 1.44;
+  }
+
+  .choice-grid {
+    display: grid;
+    gap: 10px;
+    margin-top: 17px;
+  }
+
+  .choice {
+    position: relative;
+    overflow: hidden;
+    padding: 15px;
+    border: 1px solid rgba(255, 246, 234, .14);
+    border-radius: 22px;
+    background: rgba(255, 246, 234, .06);
+  }
+
+  .choice.best {
+    border-color: rgba(244, 178, 119, .45);
+    background:
+      radial-gradient(circle at 18% 0%, rgba(244, 178, 119, .24), transparent 12rem),
+      rgba(255, 246, 234, .075);
+  }
+
+  .choice-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .pill {
+    flex: 0 0 auto;
+    padding: 6px 9px;
+    border: 1px solid rgba(255, 246, 234, .15);
+    border-radius: 999px;
+    color: rgba(255, 246, 234, .74);
+    font-size: 11px;
+    font-weight: 760;
+  }
+
+  .pill.dawn {
+    border-color: rgba(244, 178, 119, .35);
+    background: rgba(244, 178, 119, .12);
+    color: #ffd5a5;
+  }
+
+  .evidence-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .evidence {
+    padding: 10px;
+    border: 1px solid rgba(255, 246, 234, .1);
+    border-radius: 16px;
+    background: rgba(255, 246, 234, .045);
+  }
+
+  .evidence b {
+    display: block;
+    color: rgba(255, 246, 234, .88);
+    font-size: 12px;
+  }
+
+  .evidence span {
+    display: block;
+    margin-top: 4px;
+    color: rgba(255, 246, 234, .52);
+    font-size: 11px;
+    line-height: 1.24;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr .72fr;
+    gap: 9px;
+    margin-top: auto;
+    padding-top: 15px;
+  }
+
+  .primary-btn,
+  .secondary-btn {
+    min-height: 52px;
+    border: 0;
+    border-radius: 999px;
+    color: var(--ink);
+    background: #ffe4bd;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .secondary-btn {
+    border: 1px solid rgba(255, 246, 234, .15);
+    background: rgba(255, 246, 234, .07);
+    color: var(--paper);
+  }
+
+  .route {
+    margin-top: 17px;
+    padding: 15px;
+    border: 1px solid rgba(255, 246, 234, .14);
+    border-radius: 23px;
+    background: rgba(255, 246, 234, .06);
+  }
+
+  .route-line {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .city-dot {
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(255, 246, 234, .48);
+    border-radius: 999px;
+    background: var(--dawn);
+    box-shadow: 0 0 18px rgba(244, 178, 119, .5);
+  }
+
+  .city-dot.sage {
+    background: var(--sage);
+    box-shadow: 0 0 18px rgba(131, 196, 161, .48);
+  }
+
+  .city-dot.blue {
+    background: var(--blue);
+    box-shadow: 0 0 18px rgba(151, 174, 232, .42);
+  }
+
+  .route-seg {
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--dawn), rgba(255, 246, 234, .22));
+  }
+
+  .route-cities {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin-top: 8px;
+    color: rgba(255, 246, 234, .75);
+    font-size: 12px;
+    font-weight: 720;
+  }
+
+  .route-cities span:nth-child(2) {
+    text-align: center;
+  }
+
+  .route-cities span:nth-child(3) {
+    text-align: right;
+  }
+
+  .day-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 15px;
+  }
+
+  .route-card {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 12px;
+    align-items: start;
+    padding: 11px;
+    border: 1px solid rgba(255, 246, 234, .12);
+    border-radius: 22px;
+    background: rgba(255, 246, 234, .06);
+  }
+
+  .thumb {
+    width: 62px;
+    height: 62px;
+    border-radius: 17px;
+    background: var(--night-3);
+    background-size: cover;
+    background-position: center;
+  }
+
+  .thumb.tokyo {
+    background-image: url("https://picsum.photos/seed/tokyo-lantern-v2/160/160");
+  }
+
+  .thumb.kyoto {
+    background-image: url("https://picsum.photos/seed/kyoto-path-v2/160/160");
+  }
+
+  .thumb.flight {
+    background:
+      radial-gradient(circle at 30% 22%, rgba(244, 178, 119, .62), transparent 54%),
+      linear-gradient(145deg, #35313a, #14151b);
+  }
+
+  .route-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .route-top span {
+    color: rgba(255, 246, 234, .52);
+    font-size: 11px;
+    font-weight: 790;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .mini-tag {
+    padding: 4px 7px;
+    border: 1px solid rgba(255, 246, 234, .12);
+    border-radius: 999px;
+    color: rgba(255, 246, 234, .66);
+    font-size: 10px;
+    font-weight: 790;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .lock-strip {
+    margin-top: 11px;
+    padding: 11px 13px;
+    border: 1px solid rgba(244, 178, 119, .32);
+    border-radius: 19px;
+    background: rgba(244, 178, 119, .1);
+    color: rgba(255, 231, 202, .86);
+    font-size: 13px;
+    line-height: 1.36;
+  }
+
+  .model {
+    position: relative;
+    z-index: 3;
+    padding-top: 24px;
+  }
+
+  .model-title {
+    max-width: 320px;
+    font-size: 33px;
+  }
+
+  .model-sub {
+    margin: 8px 0 0;
+    max-width: 330px;
+    color: rgba(255, 246, 234, .7);
+    font-size: 14px;
+    line-height: 1.43;
+  }
+
+  .beliefs {
+    display: grid;
+    gap: 8px;
+    margin-top: 15px;
+  }
+
+  .belief-card {
+    padding: 12px;
+    border: 1px solid rgba(255, 246, 234, .13);
+    border-radius: 23px;
+    background: rgba(255, 246, 234, .06);
+    backdrop-filter: blur(20px);
+  }
+
+  .belief-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 9px;
+  }
+
+  .confidence {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #bfe2cd;
+    font-size: 11px;
+    font-weight: 760;
+  }
+
+  .confidence:before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--sage);
+  }
+
+  .correction-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 7px;
+    margin-top: 10px;
+  }
+
+  .correction-row button {
+    min-height: 31px;
+    border: 1px solid rgba(255, 246, 234, .12);
+    border-radius: 999px;
+    background: rgba(255, 246, 234, .055);
+    color: rgba(255, 246, 234, .72);
+    font-size: 11px;
+    font-weight: 740;
+  }
+
+  .sources-panel {
+    margin-top: 11px;
+    padding: 11px 12px;
+    border: 1px solid rgba(255, 246, 234, .13);
+    border-radius: 23px;
+    background:
+      radial-gradient(circle at 100% 0%, rgba(151, 174, 232, .16), transparent 12rem),
+      rgba(255, 246, 234, .055);
+  }
+
+  .source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    border-top: 1px solid rgba(255, 246, 234, .09);
+  }
+
+  .source-row:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .source-row b {
+    display: block;
+    color: rgba(255, 246, 234, .86);
+    font-size: 13px;
+  }
+
+  .source-row span {
+    display: block;
+    margin-top: 2px;
+    color: rgba(255, 246, 234, .52);
+    font-size: 12px;
+  }
+
+  .toggle {
+    width: 41px;
+    height: 24px;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(131, 196, 161, .24);
+    border: 1px solid rgba(131, 196, 161, .35);
+  }
+
+  .toggle:before {
+    content: "";
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin-left: 15px;
+    border-radius: 999px;
+    background: var(--sage);
+  }
+
+  .toggle.off {
+    background: rgba(255, 246, 234, .07);
+    border-color: rgba(255, 246, 234, .12);
+  }
+
+  .toggle.off:before {
+    margin-left: 0;
+    background: rgba(255, 246, 234, .42);
+  }
+
+  @media (max-width: 1480px) {
+    .mock-grid {
+      grid-template-columns: repeat(2, minmax(330px, 1fr));
+    }
+  }
+
+  @media (max-width: 840px) {
+    body {
+      padding: 20px 12px 32px;
+    }
+
+    .board-head {
+      grid-template-columns: 1fr;
+    }
+
+    .mock-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .phone {
+      width: min(390px, calc(100vw - 28px));
+    }
+  }
+</style>
+</head>
+<body>
+  <header class="board-head">
+    <div>
+      <p class="board-kicker">Nidra V2 mocks</p>
+      <h1>A companion that leads with help, then shows its reasoning.</h1>
+      <p class="board-note">The current mock has the right soul, but the trip template and daily UX need clearer decisions, faster actions, and visible control over what Nidra has learned.</p>
+    </div>
+    <aside class="audit">
+      <b>Design read</b>
+      <p>Mobile-first, private, warm, and app-native. Less dashboard. Less mystic abstraction. More "I noticed this, here is why, here is the useful next move."</p>
+    </aside>
+  </header>
+
+  <main class="mock-grid">
+    <section class="mock">
+      <div class="phone memory">
+        <div class="island"></div>
+        <div class="status">
+          <span>7:02</span>
+          <span class="status-icons"><span class="signal"></span><span class="battery"></span></span>
+        </div>
+        <div class="screen">
+          <div class="topbar">
+            <button class="chip-btn">You</button>
+            <div class="brand"><span class="brand-mark"></span>Nidra</div>
+            <button class="chip-btn right">Sleep</button>
+          </div>
+
+          <section class="hero-copy">
+            <p class="soft-label">Morning, Ishaan.</p>
+            <h2>I found three moves that make today easier.</h2>
+            <p>The first one protects Thursday. The rest can wait until you say so.</p>
+          </section>
+
+          <section class="moves" aria-label="Moves for today">
+            <article class="move-card primary">
+              <div>
+                <h3>Build the review spine</h3>
+                <p>Your calendar, draft, and reading all point to one sharp prep block.</p>
+              </div>
+              <div class="move-meta">
+                <span class="source-stack"><span></span><span></span><span></span></span>
+                <span>Do now</span>
+              </div>
+            </article>
+            <article class="move-card">
+              <div>
+                <h3>Trip needs one yes</h3>
+                <p>Kyoto fits your saved places better than Hakone.</p>
+              </div>
+              <div class="move-meta">
+                <span class="source-stack"><span></span><span></span><span></span></span>
+                <span>2 min</span>
+              </div>
+            </article>
+            <article class="move-card">
+              <div>
+                <h3>Priya can stay small</h3>
+                <p>I drafted a two-line reply in your shorter tone.</p>
+              </div>
+              <div class="move-meta">
+                <span class="source-stack"><span></span><span></span><span></span></span>
+                <span>Approve</span>
+              </div>
+            </article>
+          </section>
+
+          <nav class="bottom-nav" aria-label="Primary navigation">
+            <button class="nav-item active">Now</button>
+            <button class="nav-item">Threads</button>
+            <button class="nav-item">Talk</button>
+            <button class="nav-item">You</button>
+          </nav>
+        </div>
+      </div>
+      <p class="caption"><b>01 daily surface</b> The abstract field becomes a ranked list of useful moves. Nidra still feels personal, but the user knows what to tap first.</p>
+    </section>
+
+    <section class="mock">
+      <div class="phone trip-photo">
+        <div class="island"></div>
+        <div class="status">
+          <span>7:02</span>
+          <span class="status-icons"><span class="signal"></span><span class="battery"></span></span>
+        </div>
+        <section class="sheet">
+          <div class="grab"></div>
+          <div class="sheet-head">
+            <span>Japan trip</span>
+            <button class="round-btn">x</button>
+          </div>
+          <p class="soft-label" style="margin-top: 18px;">Nidra says</p>
+          <h2 class="sheet-title">Swap Hakone for one quiet Kyoto night.</h2>
+          <p class="sheet-sub">The ryokans you saved are beautiful, but they pull the trip off line. Kyoto matches your saved temples, walking pace, and five-day window.</p>
+
+          <section class="choice-grid">
+            <article class="choice best">
+              <div class="choice-line">
+                <h3>Kyoto night</h3>
+                <span class="pill dawn">My call</span>
+              </div>
+              <p>Lower travel friction. Better fit for quiet mornings and temples. One ryokan is ready to review.</p>
+            </article>
+            <article class="choice">
+              <div class="choice-line">
+                <h3>Keep Hakone</h3>
+                <span class="pill">Possible</span>
+              </div>
+              <p>Still valid, but it adds transfer time and makes the last two days feel packed.</p>
+            </article>
+          </section>
+
+          <section class="evidence-bar" aria-label="Evidence">
+            <div class="evidence"><b>Web</b><span>Ryokan pages and saved tabs</span></div>
+            <div class="evidence"><b>Maps</b><span>Transfer times and walkability</span></div>
+            <div class="evidence"><b>Calendar</b><span>Five-day travel window</span></div>
+          </section>
+
+          <div class="actions">
+            <button class="primary-btn">Use Kyoto</button>
+            <button class="secondary-btn">Show why</button>
+          </div>
+        </section>
+      </div>
+      <p class="caption"><b>02 trip decision</b> The decision is not a generic alert. It is a clear recommendation with the alternative kept visible and respectable.</p>
+    </section>
+
+    <section class="mock">
+      <div class="phone trip-plan">
+        <div class="island"></div>
+        <div class="status">
+          <span>7:02</span>
+          <span class="status-icons"><span class="signal"></span><span class="battery"></span></span>
+        </div>
+        <section class="sheet tight">
+          <div class="grab"></div>
+          <div class="sheet-head">
+            <span>Japan route</span>
+            <button class="round-btn">x</button>
+          </div>
+          <h2 class="sheet-title" style="margin-top: 15px;">The plan after Kyoto.</h2>
+          <p class="sheet-sub">Five days, two cities, one open afternoon. Each item says what is checked, what needs you, and why it is here.</p>
+
+          <section class="route" aria-label="Route">
+            <div class="route-line">
+              <span class="city-dot"></span>
+              <span class="route-seg"></span>
+              <span class="city-dot sage"></span>
+              <span class="route-seg"></span>
+              <span class="city-dot blue"></span>
+            </div>
+            <div class="route-cities"><span>Tokyo</span><span>Kyoto</span><span>Home</span></div>
+          </section>
+
+          <section class="day-list" aria-label="Trip days">
+            <article class="route-card">
+              <div class="thumb flight"></div>
+              <div>
+                <div class="route-top"><span>Depart</span><b class="mini-tag">2 options</b></div>
+                <h3>Fly to Tokyo</h3>
+                <p>ANA timing fits the Tuesday to Sunday window you usually choose.</p>
+              </div>
+            </article>
+            <article class="route-card">
+              <div class="thumb tokyo"></div>
+              <div>
+                <div class="route-top"><span>Days 1 and 2</span><b class="mini-tag">checked</b></div>
+                <h3>Tokyo base</h3>
+                <p>Ramen, rail card, and a hotel area that keeps evenings walkable.</p>
+              </div>
+            </article>
+            <article class="route-card">
+              <div class="thumb kyoto"></div>
+              <div>
+                <div class="route-top"><span>Days 3 and 4</span><b class="mini-tag">you decide</b></div>
+                <h3>Kyoto ryokan</h3>
+                <p>Private onsen, quieter streets, and a slower morning before flying home.</p>
+              </div>
+            </article>
+          </section>
+
+          <div class="lock-strip">Before I lock this: approve Kyoto, or tell me the trip should prioritize onsen over temples.</div>
+
+          <div class="actions">
+            <button class="primary-btn">Lock route</button>
+            <button class="secondary-btn">Change pace</button>
+          </div>
+        </section>
+      </div>
+      <p class="caption"><b>03 trip template</b> The route is compact, visual, and inspectable. The template can scale without becoming a tiny label festival.</p>
+    </section>
+
+    <section class="mock">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="status">
+          <span>7:02</span>
+          <span class="status-icons"><span class="signal"></span><span class="battery"></span></span>
+        </div>
+        <div class="screen">
+          <div class="topbar">
+            <button class="chip-btn">Back</button>
+            <div class="brand"><span class="brand-mark"></span>You</div>
+            <button class="chip-btn right">Pause</button>
+          </div>
+
+          <section class="model">
+            <p class="soft-label">How I understand you</p>
+            <h2 class="model-title">Beliefs you can correct.</h2>
+            <p class="model-sub">Nidra should feel observant, not creepy. Every model has sources, confidence, and an edit path.</p>
+
+            <div class="beliefs">
+              <article class="belief-card">
+                <div class="belief-head">
+                  <h3>Mornings are for deep architecture work.</h3>
+                  <span class="confidence">High</span>
+                </div>
+                <p>Calendar edits, doc activity, and late-night reading all reinforce this.</p>
+                <div class="correction-row">
+                  <button>True</button>
+                  <button>Nuance</button>
+                  <button>Wrong</button>
+                </div>
+              </article>
+              <article class="belief-card">
+                <div class="belief-head">
+                  <h3>You prefer trips with room to wander.</h3>
+                  <span class="confidence">Medium</span>
+                </div>
+                <p>Saved places lean quiet, walkable, and lightly planned.</p>
+                <div class="correction-row">
+                  <button>True</button>
+                  <button>Nuance</button>
+                  <button>Wrong</button>
+                </div>
+              </article>
+            </div>
+
+            <section class="sources-panel" aria-label="Source controls">
+              <div class="source-row"><div><b>Calendar</b><span>Events and open time</span></div><span class="toggle"></span></div>
+              <div class="source-row"><div><b>Reading</b><span>Tabs, papers, highlights</span></div><span class="toggle"></span></div>
+              <div class="source-row"><div><b>Messages</b><span>Only drafts until approved</span></div><span class="toggle off"></span></div>
+            </section>
+          </section>
+
+          <nav class="bottom-nav" aria-label="Primary navigation">
+            <button class="nav-item">Now</button>
+            <button class="nav-item">Threads</button>
+            <button class="nav-item">Talk</button>
+            <button class="nav-item active">You</button>
+          </nav>
+        </div>
+      </div>
+      <p class="caption"><b>04 trust model</b> The companion promise only works if the user can inspect and correct what Nidra believes.</p>
+    </section>
+  </main>
+</body>
+</html>
