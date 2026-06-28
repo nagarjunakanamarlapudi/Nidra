@@ -1,99 +1,33 @@
-"""The opinion workflow: group facts -> form cited opinions (LLM stages are
-injected fns returning canned JSON, so the test is deterministic)."""
+"""The opinion workflow: the tool-using agent investigates (engine loop fills the
+ledger via query tools), then validate -> review -> persist. The end-to-end run is
+driven by a LoopEngine + ScriptedChatProvider so the test is deterministic."""
 
 from __future__ import annotations
 
+import datetime as dt
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from pragya_assistant.agent.core import LoopEngine
+from pragya_assistant.agent.tools import ToolRegistry
+from pragya_assistant.connectors.browser_activity.store import (
+    BrowserActivityEventStore,
+    IngestedEvent,
+)
+from pragya_assistant.llm.types import ChatResult, ToolCall
 from pragya_assistant.user_model.facts import Fact
+from pragya_assistant.user_model.opinion_agent import EvidenceLedger, build_query_tools
 from pragya_assistant.user_model.opinion_workflow import (
     OpinionWorkflow,
     ProposedOpinion,
-    Theme,
     calibrate,
-    form_opinions,
-    group_facts,
     review_opinions,
     validate_citations,
 )
 from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
+from tests.fakes import ScriptedChatProvider
 
-
-async def test_group_facts_parses_themes() -> None:
-    facts = [Fact("browser", "search", "searched 'tokyo'", event_ids=[1], id="f1")]
-
-    async def fake(_prompt: str) -> str:
-        return '{"themes": [{"label": "travel to Tokyo", "fact_ids": ["f1"]}]}'
-
-    themes = await group_facts(facts, fake)
-    assert themes == [Theme(label="travel to Tokyo", fact_ids=["f1"])]
-
-
-async def test_group_facts_falls_back_to_single_theme_on_garbage() -> None:
-    facts = [Fact("browser", "search", "x", event_ids=[1], id="f1")]
-
-    async def fake(_prompt: str) -> str:
-        return "not json"
-
-    themes = await group_facts(facts, fake)
-    assert len(themes) == 1 and themes[0].fact_ids == ["f1"]
-
-
-async def test_form_opinions_parses_cited_opinions() -> None:
-    facts = [Fact("browser", "search", "searched 'tokyo'", event_ids=[1], id="f1")]
-    themes = [Theme(label="travel", fact_ids=["f1"])]
-
-    async def fake(_prompt: str) -> str:
-        return (
-            '{"opinions": [{"trait": "intent:travel", "value": "planning a Tokyo trip", '
-            '"confidence": 0.9, "evidence_fact_ids": ["f1"]}]}'
-        )
-
-    ops = await form_opinions(themes, facts, fake)
-    assert ops == [
-        ProposedOpinion(
-            trait="intent:travel", value="planning a Tokyo trip",
-            confidence=0.9, evidence_fact_ids=["f1"],
-        )
-    ]
-
-
-async def test_form_opinions_tolerates_garbage_fields() -> None:
-    facts = [Fact("browser", "search", "x", event_ids=[1], id="f1")]
-    themes = [Theme(label="t", fact_ids=["f1"])]
-
-    async def fake(_prompt: str) -> str:
-        return (
-            '{"opinions": ['
-            '{"trait": "", "value": 1, "confidence": "high", "evidence_fact_ids": ["f1"]},'
-            '{"trait": "intent:x", "value": 1, "confidence": null}'
-            ']}'
-        )
-
-    ops = await form_opinions(themes, facts, fake)
-    assert len(ops) == 1
-    assert ops[0].trait == "intent:x"
-    assert ops[0].confidence == 0.0
-    assert ops[0].evidence_fact_ids == []
-
-
-async def test_form_opinions_drops_null_value() -> None:
-    facts = [Fact("browser", "search", "x", event_ids=[1], id="f1")]
-    themes = [Theme(label="t", fact_ids=["f1"])]
-
-    async def fake(_prompt: str) -> str:
-        return (
-            '{"opinions": ['
-            '{"trait": "intent:travel", "value": null, "confidence": 0.8,'
-            ' "evidence_fact_ids": ["f1"]},'
-            '{"trait": "intent:valid", "value": "real value", "confidence": 0.8,'
-            ' "evidence_fact_ids": ["f1"]}'
-            ']}'
-        )
-
-    ops = await form_opinions(themes, facts, fake)
-    assert len(ops) == 1
-    assert ops[0].trait == "intent:valid"
+KEY = "browser_activity"
 
 
 def test_validate_dedups_by_trait_keeping_best() -> None:
@@ -148,7 +82,7 @@ def test_calibrate_curve() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 5: reviewer agent + OpinionWorkflow.run
+# Reviewer agent
 # ---------------------------------------------------------------------------
 
 
@@ -192,40 +126,75 @@ async def test_review_positive_adjustment_cannot_raise_confidence() -> None:
     assert kept[0].confidence == 0.8  # clamped to 0; never raised to 1.1
 
 
+# ---------------------------------------------------------------------------
+# OpinionWorkflow.run — driven end-to-end by the engine's own tool loop
+# ---------------------------------------------------------------------------
+
+
 async def test_workflow_run_persists_reviewed_opinions(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    facts = [Fact("browser", "search", "searched 'tokyo'", event_ids=[1], id="f1")]
-    model = UserModelStore(session_factory)
+    # Seed a browser search the agent discovers via the query_browsing tool.
+    events = BrowserActivityEventStore(session_factory)
+    await events.add_events(
+        KEY,
+        [IngestedEvent(client_id="s1", event_type="search",
+                       ts=dt.datetime(2026, 6, 20, 9), data={"query": "flights to tokyo"})],
+    )
+    ledger = EvidenceLedger()
+    tools = build_query_tools(ledger, browser=events, now=dt.datetime(2026, 6, 27, 12))
 
-    async def group_fn(_p: str) -> str:
-        return '{"themes": [{"label": "travel", "fact_ids": ["f1"]}]}'
-
-    async def form_fn(_p: str) -> str:
-        return ('{"opinions": [{"trait": "intent:travel", "value": "Tokyo trip", '
-                '"confidence": 0.9, "evidence_fact_ids": ["f1"]}]}')
+    # Script the engine: turn 1 calls query_browsing (fills the ledger with f1),
+    # turn 2 emits the final opinions JSON citing f1.
+    provider = ScriptedChatProvider([
+        ChatResult(
+            text="",
+            tool_calls=(ToolCall(id="c1", name="query_browsing", arguments={"days": 30}),),
+            finish_reason="tool_calls",
+            usage={},
+        ),
+        ChatResult(
+            text=('{"opinions": [{"trait": "intent:travel", "value": "Tokyo trip", '
+                  '"confidence": 0.9, "evidence_fact_ids": ["f1"]}]}'),
+            tool_calls=(),
+            finish_reason="stop",
+            usage={},
+        ),
+    ])
+    engine = LoopEngine(provider=provider, registry=ToolRegistry(tools), system_prompt="SYS")
 
     async def review_fn(_p: str) -> str:
         return '{"reviews": [{"trait": "intent:travel", "keep": true, "confidence_adjustment": 0}]}'
 
-    wf = OpinionWorkflow(model, group_fn=group_fn, form_fn=form_fn, review_fn=review_fn)
-    out = await wf.run(facts)
+    model = UserModelStore(session_factory)
+    wf = OpinionWorkflow(model, engine=engine, review_fn=review_fn, ledger=ledger)
+    out = await wf.run()
+
     assert [s.trait for s in out] == ["intent:travel"]
     current = {s.trait: s for s in await model.current_model()}
     snap = current["intent:travel"]
     assert snap.derivation is not None
-    assert snap.derivation["event_ids"] == [1]
+    assert snap.derivation["evidence_fact_ids"] == ["f1"]
+    assert snap.derivation["fact_summaries"] == ["searched 'flights to tokyo'"]
+    assert snap.derivation["method"] == "opinion-workflow"
+    assert snap.provenance == ["browser"]
+    assert len(snap.derivation["event_ids"]) == 1  # the seeded browser row
 
 
-async def test_workflow_run_empty_facts_is_noop(
+async def test_workflow_run_no_opinions_is_noop(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    wf = OpinionWorkflow(
-        UserModelStore(session_factory),
-        group_fn=_unused, form_fn=_unused, review_fn=_unused,
+    # Agent returns no opinions -> nothing to validate -> reviewer never called.
+    ledger = EvidenceLedger()
+    provider = ScriptedChatProvider(
+        [ChatResult(text='{"opinions": []}', tool_calls=(), finish_reason="stop", usage={})]
     )
-    assert await wf.run([]) == []
+    engine = LoopEngine(provider=provider, registry=ToolRegistry([]), system_prompt="SYS")
+    wf = OpinionWorkflow(
+        UserModelStore(session_factory), engine=engine, review_fn=_unused, ledger=ledger,
+    )
+    assert await wf.run() == []
 
 
 async def _unused(_p: str) -> str:  # pragma: no cover - must never be called
-    raise AssertionError("LLM should not be called for empty facts")
+    raise AssertionError("reviewer should not be called when there are no opinions")

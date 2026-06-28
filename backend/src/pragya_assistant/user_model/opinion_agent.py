@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from pragya_assistant.agent.completion import extract_json
+from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.agent.tools import Tool
 from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
 from pragya_assistant.connectors.google_calendar.store import CalendarEventStore
@@ -22,6 +24,7 @@ from pragya_assistant.user_model.facts import (
     collect_email_facts,
     collect_memory_facts,
 )
+from pragya_assistant.user_model.opinion_workflow import ProposedOpinion
 
 
 class EvidenceLedger:
@@ -133,3 +136,57 @@ def build_query_tools(
         ))
 
     return tools
+
+
+# ---------------------------------------------------------------------------
+# Task E: the opinion-maker prompt + final parse + a thin runner. We write NO
+# loop -- the engine runs the model<->tool loop itself; the tools fill the ledger.
+# ---------------------------------------------------------------------------
+
+OPINION_SYSTEM = (
+    "You are Nidra's opinion-maker. Investigate the user with the query tools "
+    "(query_browsing, query_calendar, query_email, query_memory) -- pull what you need, "
+    "including calendar history AND upcoming events. Then state durable, HIGH-CONFIDENCE "
+    "opinions the evidence DIRECTLY supports. Each opinion MUST cite the fact ids "
+    "(e.g. f3) the tools returned. State nothing the facts don't support. NO speculation "
+    "or future-guessing -- that's the dreamer's job. Prefer interest:<topic>, preference:<x>, "
+    "routine:<x>, intent:<x>. When done, output ONLY JSON: "
+    '{"opinions": [{"trait": "interest:travel", "value": "...", "confidence": 0.0, '
+    '"evidence_fact_ids": ["f1"]}]}'
+)
+
+_KICKOFF = (
+    "Form grounded opinions about the user. Investigate with the tools, then output "
+    "the final JSON."
+)
+
+
+def parse_proposed_opinions(text: str) -> list[ProposedOpinion]:
+    """Parse the agent's final JSON into proposed opinions, tolerating garbage.
+
+    Drops malformed entries (empty trait, missing/empty value); clamps confidence
+    to [0, 1]; keeps only string/int fact ids. Citation resolution against the
+    ledger happens later in ``validate_citations`` (the anti-hallucination gate)."""
+    parsed = extract_json(text)
+    out: list[ProposedOpinion] = []
+    for raw in parsed.get("opinions", []) if isinstance(parsed, dict) else []:
+        if not isinstance(raw, dict):
+            continue
+        trait = str(raw.get("trait") or "").strip()
+        value = raw.get("value")
+        if not trait or value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        try:
+            conf = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            conf = 0.0
+        ids = [str(i) for i in raw.get("evidence_fact_ids", []) if isinstance(i, str | int)]
+        out.append(ProposedOpinion(trait, value, conf, ids))
+    return out
+
+
+async def run_opinion_agent(engine: AgentEngine) -> str:
+    """Drive the engine -- its OWN tool loop populates the ledger via the query
+    tools -- and return the agent's final text (the opinions JSON to parse)."""
+    reply, _ = await engine.respond([], _KICKOFF)
+    return reply

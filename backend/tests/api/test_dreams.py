@@ -9,10 +9,13 @@ import pytest
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from pragya_assistant.agent.core import LoopEngine
+from pragya_assistant.agent.tools import Tool, ToolRegistry
 from pragya_assistant.connectors.browser_activity.store import (
     BrowserActivityEventStore,
     IngestedEvent,
 )
+from pragya_assistant.llm.types import ChatResult, ToolCall
 from pragya_assistant.memory.db import create_session_factory
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import UserModelStore
@@ -34,10 +37,11 @@ async def test_dreams_requires_token(build_test_app: AppBuilder) -> None:
 async def test_opinions_refresh_runs_workflow(
     engine: AsyncEngine, build_test_app: AppBuilder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Refresh forms a fact-grounded, cited opinion. The route runs the workflow on
-    a CONFINED completion (``build_confined_completion_fn``) — never the web-enabled
-    chat agent — so the 3 LLM stages (group -> form -> review) are scripted on that
-    confined fn (called 3x in order), and the chat provider must stay untouched."""
+    """Refresh forms a fact-grounded, cited opinion. The opinion-maker is a
+    tool-using agent on a CONFINED engine (``build_opinion_engine``): it calls the
+    query tools (which fill the ledger), then emits the opinions JSON; the skeptical
+    review runs on a CONFINED completion (``build_confined_completion_fn``). Neither
+    touches the web-enabled chat agent, so its provider must stay untouched."""
     from pragya_assistant.api.routes import dreams as dreams_route
 
     sf = create_session_factory(engine)
@@ -52,20 +56,37 @@ async def test_opinions_refresh_runs_workflow(
             )
         ],
     )
-    group = '{"themes": [{"label": "travel", "fact_ids": ["f1"]}]}'
     form = (
         '{"opinions": [{"trait": "intent:travel", "value": "planning a Tokyo trip", '
         '"confidence": 0.9, "evidence_fact_ids": ["f1"]}]}'
     )
     review = '{"reviews": [{"trait": "intent:travel", "keep": true, "confidence_adjustment": 0}]}'
-    scripted = iter([group, form, review])
+
+    # The opinion engine: a confined brain that investigates via the real query
+    # tools (bound to the route's ledger) then emits the opinions JSON citing f1.
+    def fake_opinion_engine(_settings: object, *, tools: list[Tool]) -> object:
+        return LoopEngine(
+            provider=ScriptedChatProvider([
+                ChatResult(
+                    text="",
+                    tool_calls=(ToolCall(id="c1", name="query_browsing",
+                                         arguments={"days": 30}),),
+                    finish_reason="tool_calls",
+                    usage={},
+                ),
+                ChatResult(text=form, tool_calls=(), finish_reason="stop", usage={}),
+            ]),
+            registry=ToolRegistry(tools),
+            system_prompt="SYS",
+        )
 
     def fake_confined(_settings: object) -> object:
         async def _complete(_prompt: str) -> str:
-            return next(scripted)
+            return review
 
         return _complete
 
+    monkeypatch.setattr(dreams_route, "build_opinion_engine", fake_opinion_engine)
     monkeypatch.setattr(dreams_route, "build_confined_completion_fn", fake_confined)
 
     provider = ScriptedChatProvider([])  # the web-enabled chat engine must NOT run
@@ -77,7 +98,7 @@ async def test_opinions_refresh_runs_workflow(
     current = {s.trait: s for s in await UserModelStore(sf).current_model()}
     assert "intent:travel" in current
     assert current["intent:travel"].derivation["event_ids"] == [1]
-    assert provider.calls == []  # the confined completion ran the workflow, not chat
+    assert provider.calls == []  # the confined opinion agent ran it, not chat
 
 
 async def test_dreams_run_uses_confined_engine_not_chat(

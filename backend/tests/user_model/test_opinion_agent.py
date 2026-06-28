@@ -11,7 +11,11 @@ from pragya_assistant.connectors.browser_activity.store import (
     BrowserActivityEventStore,
     IngestedEvent,
 )
-from pragya_assistant.user_model.opinion_agent import EvidenceLedger, build_query_tools
+from pragya_assistant.user_model.opinion_agent import (
+    EvidenceLedger,
+    build_query_tools,
+    parse_proposed_opinions,
+)
 
 KEY = "browser_activity"
 
@@ -44,3 +48,30 @@ async def test_query_browsing_tool_populates_ledger(
     out = await _tool(tools, "query_browsing").handler({"days": 30})
     assert "flights to tokyo" in out and "f1" in out      # observation cites the ledger id
     assert led.facts and led.facts[0].summary.startswith("searched")
+
+
+def test_parse_proposed_opinions_tolerates_garbage() -> None:
+    text = ('{"opinions": [{"trait": "", "value": 1, "evidence_fact_ids": ["f1"]},'
+            '{"trait": "intent:travel", "value": "Tokyo", "confidence": 0.9, '
+            '"evidence_fact_ids": ["f1"]}]}')
+    ops = parse_proposed_opinions(text)
+    assert len(ops) == 1
+    assert ops[0].trait == "intent:travel" and ops[0].evidence_fact_ids == ["f1"]
+
+
+def test_parse_proposed_opinions_drops_null_value_and_clamps_confidence() -> None:
+    text = ('{"opinions": ['
+            '{"trait": "intent:travel", "value": null, "confidence": 0.8, '
+            '"evidence_fact_ids": ["f1"]},'
+            '{"trait": "interest:rust", "value": "rust", "confidence": "high", '
+            '"evidence_fact_ids": [2]}'
+            ']}')
+    ops = parse_proposed_opinions(text)
+    assert len(ops) == 1
+    assert ops[0].trait == "interest:rust"
+    assert ops[0].confidence == 0.0          # unparseable confidence -> 0.0
+    assert ops[0].evidence_fact_ids == ["2"]  # int id coerced to str
+
+
+def test_parse_proposed_opinions_empty_on_garbage_text() -> None:
+    assert parse_proposed_opinions("not json at all") == []

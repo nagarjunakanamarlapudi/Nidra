@@ -7,6 +7,7 @@ from pragya_assistant.agent.factory import (
     build_confined_completion_fn,
     build_confined_engine,
     build_engine,
+    build_opinion_engine,
 )
 from pragya_assistant.agent.guard import GuardedEngine
 from pragya_assistant.agent.hardening import HARDENING_PREAMBLE
@@ -222,3 +223,33 @@ def test_confined_engine_with_data_tools_keeps_them_but_no_web() -> None:
     assert {t.name for t in cc_brain._tools} == {"upcoming_birthdays", "account_balances"}
     assert cc_brain._builtin_tools == ()  # still NO web/file/bash
     assert cc_brain._options().tools == []
+
+
+# --- Opinion engine (Up-E): tool-using opinion agent, confined -----------------
+# build_opinion_engine wires the read-only query tools + the opinion prompt onto
+# the configured brain, guarded + hardened + CONFINED (builtin_tools=()), so the
+# opinion agent can never reach web/file/bash even with the untrusted ingested data.
+
+
+def test_build_opinion_engine_wires_query_tools_confined_for_claude_code() -> None:
+    tools = [_noop_tool("query_browsing"), _noop_tool("query_calendar")]
+    built = build_opinion_engine(_settings(agent_engine="claude-code"), tools=tools)
+    assert isinstance(built, GuardedEngine)  # output is scrubbed
+    inner = built._inner
+    assert isinstance(inner, ClaudeCodeEngine)
+    assert {t.name for t in inner._tools} == {"query_browsing", "query_calendar"}
+    assert inner._builtin_tools == ()  # NO web/file/bash built-ins
+    opts = inner._options()
+    assert opts.tools == []  # availability: zero built-ins (no web, no file, no bash)
+    assert "WebFetch" not in opts.allowed_tools and "WebSearch" not in opts.allowed_tools
+    for builtin in ("Read", "Bash", "Write"):
+        assert builtin in (opts.disallowed_tools or [])
+
+
+def test_build_opinion_engine_loop_brain_keeps_query_tools() -> None:
+    tools = [_noop_tool("query_browsing")]
+    built = build_opinion_engine(_settings(agent_engine="ollama"), tools=tools)
+    assert isinstance(built, GuardedEngine)
+    inner = built._inner
+    assert isinstance(inner, LoopEngine)
+    assert {s.name for s in inner._registry.specs()} == {"query_browsing"}

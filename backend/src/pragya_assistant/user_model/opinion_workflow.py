@@ -1,33 +1,30 @@
 # src/pragya_assistant/user_model/opinion_workflow.py
-"""The opinion-forming workflow: group -> form -> validate -> review -> persist.
+"""The opinion-forming workflow: investigate -> validate -> review -> persist.
 
-Opinions are LLM-formed but strictly fact-bound: high-confidence, cited, no
-imagination (speculation is the dreamer's job). The three LLM stages take an
-injected completion fn so tests are deterministic; the deterministic citation
-validator is the mechanical anti-hallucination gate, and the reviewer agent is a
-skeptical second pass that drops opinions overreaching their evidence."""
+The opinion-maker is now a tool-using agent (see ``opinion_agent``): the engine
+runs the model<->tool loop itself, the query tools fill an ``EvidenceLedger``, and
+this workflow validates the agent's cited opinions against that ledger, runs the
+skeptical reviewer pass, and persists. Opinions stay strictly fact-bound: high-
+confidence, cited, no imagination (speculation is the dreamer's job). The
+deterministic citation validator is the mechanical anti-hallucination gate; the
+reviewer agent drops opinions overreaching their evidence."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from pragya_assistant.agent.completion import extract_json
+from pragya_assistant.agent.completion import CompletionFn, extract_json
+from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.user_model.facts import Fact
 from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
 
+if TYPE_CHECKING:  # avoid the opinion_agent <-> opinion_workflow import cycle at runtime
+    from pragya_assistant.user_model.opinion_agent import EvidenceLedger
+
 logger = structlog.get_logger(__name__)
-
-LlmFn = Callable[[str], Awaitable[str]]
-
-
-@dataclass(frozen=True)
-class Theme:
-    label: str
-    fact_ids: list[str]
 
 
 @dataclass(frozen=True)
@@ -36,76 +33,6 @@ class ProposedOpinion:
     value: Any
     confidence: float
     evidence_fact_ids: list[str]
-
-
-GROUP_SYSTEM = (
-    "You are Nidra's fact organizer. Group the given FACTS into a few coherent "
-    "themes (e.g. 'evaluating cloud infra', 'travel to Tokyo'). Use ONLY the facts "
-    "given; never invent. Keep each fact_id exactly as shown. Respond with ONLY "
-    'JSON: {"themes": [{"label": "short label", "fact_ids": ["f1", "f2"]}]}'
-)
-
-FORM_SYSTEM = (
-    "You are Nidra's opinion former. For each theme, state durable, HIGH-CONFIDENCE "
-    "opinions about the user that the facts DIRECTLY support. Each opinion MUST list "
-    "the fact_ids it rests on. State nothing the facts don't support. NO speculation, "
-    "future-guessing, or unobservable personality traits — omit those (they are "
-    "dreams, handled elsewhere). Prefer concrete traits like interest:<topic>, "
-    "preference:<x>, routine:<x>, intent:<x>. Respond with ONLY JSON: "
-    '{"opinions": [{"trait": "interest:travel", "value": "...", "confidence": 0.85, '
-    '"evidence_fact_ids": ["f1"]}]}'
-)
-
-
-def _facts_block(facts: list[Fact]) -> str:
-    return "\n".join(f"- {f.id} [{f.source}/{f.kind}]: {f.summary}" for f in facts)
-
-
-def build_group_prompt(facts: list[Fact]) -> str:
-    return f"{GROUP_SYSTEM}\n\nFACTS:\n{_facts_block(facts)}"
-
-
-def build_form_prompt(themes: list[Theme], facts: list[Fact]) -> str:
-    by_id = {f.id: f for f in facts}
-    lines = [FORM_SYSTEM, "", "THEMES:"]
-    for t in themes:
-        lines.append(f"# {t.label}")
-        lines += [f"- {i}: {by_id[i].summary}" for i in t.fact_ids if i in by_id]
-    return "\n".join(lines)
-
-
-async def group_facts(facts: list[Fact], fn: LlmFn) -> list[Theme]:
-    parsed = extract_json(await fn(build_group_prompt(facts)))
-    themes: list[Theme] = []
-    for raw in parsed.get("themes", []) if isinstance(parsed, dict) else []:
-        if not isinstance(raw, dict):
-            continue
-        ids = [str(i) for i in raw.get("fact_ids", []) if isinstance(i, str | int)]
-        if ids:
-            themes.append(Theme(label=str(raw.get("label") or "theme"), fact_ids=ids))
-    # Fallback: one theme over all facts, so a parse miss never loses the digest.
-    return themes or [Theme(label="all", fact_ids=[f.id for f in facts])]
-
-
-async def form_opinions(themes: list[Theme], facts: list[Fact], fn: LlmFn) -> list[ProposedOpinion]:
-    parsed = extract_json(await fn(build_form_prompt(themes, facts)))
-    out: list[ProposedOpinion] = []
-    for raw in parsed.get("opinions", []) if isinstance(parsed, dict) else []:
-        if not isinstance(raw, dict):
-            continue
-        trait = str(raw.get("trait") or "").strip()
-        if not trait:
-            continue
-        value = raw.get("value")
-        if value is None or (isinstance(value, str) and not value.strip()):
-            continue
-        try:
-            conf = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
-        except (TypeError, ValueError):
-            conf = 0.0
-        ids = [str(i) for i in raw.get("evidence_fact_ids", []) if isinstance(i, str | int)]
-        out.append(ProposedOpinion(trait, value, conf, ids))
-    return out
 
 
 def calibrate(n_citations: int, n_sources: int) -> float:
@@ -174,7 +101,7 @@ def build_review_prompt(snaps: list[TraitSnapshot]) -> str:
     return "\n".join(lines)
 
 
-async def review_opinions(snaps: list[TraitSnapshot], fn: LlmFn) -> list[TraitSnapshot]:
+async def review_opinions(snaps: list[TraitSnapshot], fn: CompletionFn) -> list[TraitSnapshot]:
     if not snaps:
         return []
     parsed = extract_json(await fn(build_review_prompt(snaps)))
@@ -212,22 +139,36 @@ async def review_opinions(snaps: list[TraitSnapshot], fn: LlmFn) -> list[TraitSn
 
 
 class OpinionWorkflow:
-    """group -> form -> validate -> review -> persist. LLM stages are injected."""
+    """Drives the tool-using opinion agent -> validate -> review -> persist.
+
+    The engine runs the model<->tool loop itself; the query tools fill ``ledger``
+    (the citable universe). We then resolve the agent's cited opinions against the
+    ledger, run the reviewer pass, and persist. ``review_fn`` is a one-shot
+    completion (the skeptical second pass), injected so tests stay deterministic."""
 
     def __init__(
-        self, model: UserModelStore, *, group_fn: LlmFn, form_fn: LlmFn, review_fn: LlmFn
+        self,
+        model: UserModelStore,
+        *,
+        engine: AgentEngine,
+        review_fn: CompletionFn,
+        ledger: EvidenceLedger,
     ) -> None:
         self._model = model
-        self._group_fn = group_fn
-        self._form_fn = form_fn
+        self._engine = engine
         self._review_fn = review_fn
+        self._ledger = ledger
 
-    async def run(self, facts: list[Fact]) -> list[TraitSnapshot]:
-        if not facts:
-            return []
-        themes = await group_facts(facts, self._group_fn)
-        proposed = await form_opinions(themes, facts, self._form_fn)
-        validated = validate_citations(proposed, facts)
+    async def run(self) -> list[TraitSnapshot]:
+        # Imported inside run() to avoid the opinion_agent <-> opinion_workflow cycle.
+        from pragya_assistant.user_model.opinion_agent import (
+            parse_proposed_opinions,
+            run_opinion_agent,
+        )
+
+        reply = await run_opinion_agent(self._engine)  # engine loop fills the ledger via tools
+        proposed = parse_proposed_opinions(reply)
+        validated = validate_citations(proposed, self._ledger.facts)
         reviewed = await review_opinions(validated, self._review_fn)
         await self._model.write(reviewed)
         return reviewed

@@ -184,6 +184,25 @@ def build_engine(
     )
 
 
+def build_opinion_engine(settings: Settings, *, tools: list[Tool]) -> AgentEngine:
+    """Engine for the opinion-maker job: the configured brain wired with the
+    read-only query tools + the opinion-forming prompt, and CONFINED.
+
+    Passes ``builtin_tools=()`` so the agent gets NO web/file/bash — only the
+    in-process query tools (``query_browsing``/``query_calendar``/...). Reuses the
+    same single engine switch + ``harden`` + ``guard`` as every other engine, so
+    the opinion agent is confined and output-scrubbed for free.
+
+    Codex note: like ``build_engine``, Codex ignores the passed ``tools`` — it
+    self-wires its own MCP memory tools. With ``allow_codex_bypass`` defaulting to
+    ``False`` the confined (read-only, no-MCP) Codex is used, so under Codex the
+    opinion agent still runs but without the query tools. The opinion agent
+    therefore targets the claude-code / loop brains."""
+    from pragya_assistant.user_model.opinion_agent import OPINION_SYSTEM
+
+    return _make_engine(settings, tools=tools, system_prompt=OPINION_SYSTEM, builtin_tools=())
+
+
 def build_confined_engine(settings: Settings, *, tools: list[Tool] | None = None) -> AgentEngine:
     """A confined engine: NO web built-ins (``builtin_tools=()``) and — for Codex
     — no memory MCP and no sandbox bypass. Hardened + guarded like every engine.
