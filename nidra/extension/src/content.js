@@ -29,10 +29,31 @@ const DEFAULT_DENYLIST = [
 
 let cfg = { paused: false, denylist: DEFAULT_DENYLIST, captureForms: true, captureSelections: true, captureContent: true };
 let started = false;
-let pageStart = Date.now();
-let pageStartPerf = 0; // performance.now() baseline for decision latency
 let maxScrollPct = 0;
 let currentPageId = null;
+
+// Active (foreground) time accounting: the timer PAUSES when the tab is hidden,
+// so dwell/latency reflect time the user was actually on the page — not a tab
+// left open in the background.
+let activeAccumMs = 0;
+let activeSince = Date.now();
+let pageVisible = true;
+
+function activeMs() {
+  return Math.round(activeAccumMs + (pageVisible ? Date.now() - activeSince : 0));
+}
+function pauseActive() {
+  if (pageVisible) {
+    activeAccumMs += Date.now() - activeSince;
+    pageVisible = false;
+  }
+}
+function resumeActive() {
+  if (!pageVisible) {
+    activeSince = Date.now();
+    pageVisible = true;
+  }
+}
 
 // Decision capture state (reset per page load).
 const IMPRESSION_CAP = 40;
@@ -90,7 +111,7 @@ function emitPrimary(reason) {
     cachedPrimary = { id: currentPageId, ev };
   }
   ev.metrics = {
-    dwellMs: Date.now() - pageStart,
+    dwellMs: activeMs(), // foreground time only — paused while the tab is hidden
     scrollPct: Math.round(maxScrollPct * 100) / 100,
     ...(ev.type === "reading" ? { readPct: Math.round(maxScrollPct * 100) / 100 } : {}),
     reason,
@@ -111,8 +132,9 @@ function newPage() {
   }
   currentPageId = uuid();
   cachedPrimary = null;
-  pageStart = Date.now();
-  pageStartPerf = performance.now();
+  activeAccumMs = 0;
+  activeSince = Date.now();
+  pageVisible = document.visibilityState !== "hidden";
   maxScrollPct = 0;
   seenKeys = new Set();
   recentInteractions = new Map();
@@ -147,7 +169,7 @@ function onInteraction(target) {
   });
   ev.id = uuid();
   ev.context_id = currentPageId;
-  ev.metrics = { latencyMs: Math.max(0, Math.round(performance.now() - pageStartPerf)) };
+  ev.metrics = { latencyMs: activeMs() }; // foreground time to the interaction
   send(ev);
 }
 
@@ -234,7 +256,14 @@ function maybeStep() {
 
 // --- behavior listeners ---
 addEventListener("scroll", () => { maxScrollPct = Math.max(maxScrollPct, scrollPct()); }, { passive: true });
-addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") emitPrimary("flush"); });
+addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    pauseActive(); // stop the dwell/latency clock while the tab is backgrounded
+    emitPrimary("flush");
+  } else {
+    resumeActive();
+  }
+});
 addEventListener("pagehide", () => emitPrimary("flush"));
 
 // Interaction capture: semantic clicks/toggles/selects, routed through the gate.

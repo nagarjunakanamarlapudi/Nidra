@@ -58,8 +58,10 @@ async def test_browser_extractor_from_real_rows(
         ],
     )
     traits = {t.trait: t for t in await BrowserExtractor(events).extract()}
-    assert "decisiveness" in traits and traits["decisiveness"].provenance == ["browser"]
+    assert "decisiveness" not in traits  # time-on-page is not decisiveness
     assert traits["preference:payment"].value == "Apple Pay"
+    assert traits["preference:payment"].provenance == ["browser"]
+    assert traits["abandonment_rate"].derivation["event_ids"]  # evidence chain present
 
 
 async def test_finance_extractor_top_category() -> None:
@@ -89,8 +91,7 @@ async def test_opinion_former_fuses_three_sources(
         [
             IngestedEvent(
                 client_id="i1", event_type="interaction", ts=dt.datetime(2026, 6, 28, 9),
-                data={"action": "toggle_on", "group": "Add-ons", "label": "Toll"},
-                metrics={"latencyMs": 900},
+                data={"action": "choose", "group": "Payment methods", "value": "Apple Pay"},
             )
         ],
     )
@@ -104,4 +105,4 @@ async def test_opinion_former_fuses_three_sources(
         model,
     ).form()
     traits = {t.trait for t in formed}
-    assert {"decisiveness", "spend:top_category", "calendar:weekly_load"} <= traits
+    assert {"preference:payment", "spend:top_category", "calendar:weekly_load"} <= traits

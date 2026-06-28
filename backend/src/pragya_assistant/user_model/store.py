@@ -27,6 +27,9 @@ class TraitSnapshot:
     confidence: float = 0.0
     evidence: int = 0
     provenance: list[str] = field(default_factory=list)
+    # The evidence chain: how this trait was derived — {formula, inputs, event_ids}
+    # — so an opinion is traceable to the exact facts behind it.
+    derivation: dict[str, Any] | None = None
     computed_at: dt.datetime | None = None
 
 
@@ -46,6 +49,7 @@ class UserModelStore:
                     confidence=snap.confidence,
                     evidence=snap.evidence,
                     provenance=list(snap.provenance),
+                    derivation=snap.derivation,
                 )
                 if snap.computed_at is not None:
                     row.computed_at = snap.computed_at

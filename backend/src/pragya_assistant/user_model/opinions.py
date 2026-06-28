@@ -35,6 +35,9 @@ def _merge_by_trait(snaps: list[TraitSnapshot]) -> list[TraitSnapshot]:
         n_sources = max(1, len(provenance))
         # corroboration across sources nudges confidence up, capped at 1.0
         confidence = min(1.0, round(rep.confidence + 0.1 * (n_sources - 1), 2))
+        # keep every contributing source's evidence chain
+        derivations = [s.derivation for s in group if s.derivation]
+        derivation = {"sources": derivations} if derivations else None
         merged.append(
             TraitSnapshot(
                 trait=trait,
@@ -42,6 +45,7 @@ def _merge_by_trait(snaps: list[TraitSnapshot]) -> list[TraitSnapshot]:
                 confidence=confidence,
                 evidence=evidence,
                 provenance=provenance,
+                derivation=derivation,
             )
         )
     return merged

@@ -52,8 +52,10 @@ async def test_derive_persists_traits(session_factory: async_sessionmaker[AsyncS
 
     current = await model.current_model()
     traits = {s.trait: s for s in current}
-    assert "decisiveness" in traits
-    assert "preference:payment" in traits
+    # decisiveness-from-latency is gone — time on page is not deliberation.
+    assert "decisiveness" not in traits
+    assert "abandonment_rate" in traits
     assert traits["preference:payment"].value == "Apple Pay"
-    # provenance is recorded for auditability
-    assert traits["decisiveness"].provenance
+    # the evidence chain points at the exact contributing event(s)
+    assert traits["preference:payment"].derivation["event_ids"]
+    assert "formula" in traits["preference:payment"].derivation

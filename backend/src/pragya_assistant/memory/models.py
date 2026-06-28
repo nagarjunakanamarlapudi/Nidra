@@ -363,6 +363,8 @@ class UserModelSnapshot(Base):
     confidence: Mapped[float] = mapped_column(default=0.0)
     evidence: Mapped[int] = mapped_column(default=0)
     provenance: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
+    # Evidence chain: {formula, inputs, event_ids} — traces the trait to its facts.
+    derivation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
     computed_at: Mapped[dt.datetime] = mapped_column(server_default=func.now(), index=True)
 
 

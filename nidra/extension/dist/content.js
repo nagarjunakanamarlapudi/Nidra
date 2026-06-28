@@ -11622,10 +11622,26 @@ ${contentString}
   ];
   var cfg = { paused: false, denylist: DEFAULT_DENYLIST, captureForms: true, captureSelections: true, captureContent: true };
   var started = false;
-  var pageStart = Date.now();
-  var pageStartPerf = 0;
   var maxScrollPct = 0;
   var currentPageId = null;
+  var activeAccumMs = 0;
+  var activeSince = Date.now();
+  var pageVisible = true;
+  function activeMs() {
+    return Math.round(activeAccumMs + (pageVisible ? Date.now() - activeSince : 0));
+  }
+  function pauseActive() {
+    if (pageVisible) {
+      activeAccumMs += Date.now() - activeSince;
+      pageVisible = false;
+    }
+  }
+  function resumeActive() {
+    if (!pageVisible) {
+      activeSince = Date.now();
+      pageVisible = true;
+    }
+  }
   var IMPRESSION_CAP = 40;
   var DWELL_MS = 400;
   var seenKeys = /* @__PURE__ */ new Set();
@@ -11676,7 +11692,8 @@ ${contentString}
       cachedPrimary = { id: currentPageId, ev };
     }
     ev.metrics = {
-      dwellMs: Date.now() - pageStart,
+      dwellMs: activeMs(),
+      // foreground time only — paused while the tab is hidden
       scrollPct: Math.round(maxScrollPct * 100) / 100,
       ...ev.type === "reading" ? { readPct: Math.round(maxScrollPct * 100) / 100 } : {},
       reason
@@ -11693,8 +11710,9 @@ ${contentString}
     }
     currentPageId = uuid();
     cachedPrimary = null;
-    pageStart = Date.now();
-    pageStartPerf = performance.now();
+    activeAccumMs = 0;
+    activeSince = Date.now();
+    pageVisible = document.visibilityState !== "hidden";
     maxScrollPct = 0;
     seenKeys = /* @__PURE__ */ new Set();
     recentInteractions = /* @__PURE__ */ new Map();
@@ -11727,7 +11745,7 @@ ${contentString}
     });
     ev.id = uuid();
     ev.context_id = currentPageId;
-    ev.metrics = { latencyMs: Math.max(0, Math.round(performance.now() - pageStartPerf)) };
+    ev.metrics = { latencyMs: activeMs() };
     send(ev);
   }
   function onImpression(el) {
@@ -11830,7 +11848,12 @@ ${contentString}
     maxScrollPct = Math.max(maxScrollPct, scrollPct());
   }, { passive: true });
   addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") emitPrimary("flush");
+    if (document.visibilityState === "hidden") {
+      pauseActive();
+      emitPrimary("flush");
+    } else {
+      resumeActive();
+    }
   });
   addEventListener("pagehide", () => emitPrimary("flush"));
   addEventListener("click", (e) => onInteraction(e.target), true);

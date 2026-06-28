@@ -25,11 +25,13 @@ async def test_form_merges_same_trait_across_sources(
     model = UserModelStore(session_factory)
     browser = FakeExtractor(
         "browser",
-        [TraitSnapshot("interest:travel", value=0.7, confidence=0.6, evidence=3, provenance=["browser"])],
+        [TraitSnapshot("interest:travel", value=0.7, confidence=0.6, evidence=3, provenance=["browser"],
+                       derivation={"formula": "browser reads", "event_ids": [1, 2, 3]})],
     )
     plaid = FakeExtractor(
         "plaid",
-        [TraitSnapshot("interest:travel", value="high", confidence=0.5, evidence=2, provenance=["plaid"])],
+        [TraitSnapshot("interest:travel", value="high", confidence=0.5, evidence=2, provenance=["plaid"],
+                       derivation={"formula": "travel spend", "event_ids": [9]})],
     )
     cal = FakeExtractor(
         "calendar",
@@ -44,5 +46,7 @@ async def test_form_merges_same_trait_across_sources(
     assert set(travel.provenance) == {"browser", "plaid"}  # corroborated across sources
     assert travel.evidence == 5  # 3 + 2
     assert travel.confidence >= 0.6  # boosted (or at least the max)
+    # the merged opinion keeps every source's evidence chain
+    assert len(travel.derivation["sources"]) == 2
     # persisted to the user model
     assert {s.trait for s in await model.current_model()} == {"interest:travel", "routine:mornings"}

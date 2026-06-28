@@ -20,36 +20,50 @@ if TYPE_CHECKING:
 _PAYMENT_GROUP = re.compile(r"payment", re.I)
 
 
-def _num(x: object) -> float | None:
-    return float(x) if isinstance(x, int | float) and not isinstance(x, bool) and x >= 0 else None
-
-
 def compute_browser_traits(rows: list[BrowserActivityEvent]) -> list[TraitSnapshot]:
     """Pure: distill decision-style traits from browser interaction/action rows.
     Shared by UserModelDeriver and the multi-source BrowserExtractor. Provenance
-    is source-level (``browser``) so cross-source merge groups it cleanly."""
+    is source-level (``browser``); every trait carries a derivation evidence chain.
+
+    NOTE: we intentionally do NOT derive "decisiveness" from time-on-page latency.
+    Time-since-page-load is not deliberation — a tab can sit open/backgrounded for
+    an hour. Decision style is read from REVERSALS (re-touching a control), which
+    is time-independent.
+    """
     interactions = [r for r in rows if r.event_type == "interaction"]
     actions = [r for r in rows if r.event_type == "action"]
     snaps: list[TraitSnapshot] = []
 
-    # Decisiveness: fast decisions → high (normalized over an 8s ceiling).
-    lat = [v for r in interactions if (v := _num((r.metrics or {}).get("latencyMs"))) is not None]
-    if lat:
-        avg = sum(lat) / len(lat)
+    # Deliberation: controls the user re-touched / reversed — a time-independent
+    # decision-style signal (toggled on then off, re-chose, etc.).
+    by_key: dict[str, list[BrowserActivityEvent]] = {}
+    for r in interactions:
+        key = (r.data or {}).get("elementKey")
+        if key:
+            by_key.setdefault(str(key), []).append(r)
+    reversed_keys = {k: rs for k, rs in by_key.items() if len(rs) > 1}
+    if reversed_keys:
+        event_ids = [r.id for rs in reversed_keys.values() for r in rs]
         snaps.append(
             TraitSnapshot(
-                trait="decisiveness",
-                value=round(1 - min(1.0, avg / 8000), 2),
-                confidence=round(min(1.0, len(lat) / 5), 2),
-                evidence=len(lat),
+                trait="deliberation",
+                value=len(reversed_keys),
+                confidence=round(min(1.0, len(reversed_keys) / 3), 2),
+                evidence=len(reversed_keys),
                 provenance=["browser"],
+                derivation={
+                    "formula": "count of controls re-touched/reversed (time-independent)",
+                    "inputs": {"reversed_controls": len(reversed_keys)},
+                    "event_ids": event_ids,
+                },
             )
         )
 
     # Abandonment: abandoned / reached funnels.
-    reached = sum(1 for r in actions if "reached" in ((r.data or {}).get("milestone") or ""))
-    abandoned = sum(1 for r in actions if (r.data or {}).get("milestone") == "abandoned")
-    if reached or abandoned:
+    reached_rows = [r for r in actions if "reached" in ((r.data or {}).get("milestone") or "")]
+    abandoned_rows = [r for r in actions if (r.data or {}).get("milestone") == "abandoned"]
+    if reached_rows or abandoned_rows:
+        reached, abandoned = len(reached_rows), len(abandoned_rows)
         rate = round(abandoned / reached, 2) if reached else (1.0 if abandoned else 0.0)
         snaps.append(
             TraitSnapshot(
@@ -58,6 +72,11 @@ def compute_browser_traits(rows: list[BrowserActivityEvent]) -> list[TraitSnapsh
                 confidence=round(min(1.0, (reached + abandoned) / 4), 2),
                 evidence=reached + abandoned,
                 provenance=["browser"],
+                derivation={
+                    "formula": "abandoned / reached funnels",
+                    "inputs": {"abandoned": abandoned, "reached": reached},
+                    "event_ids": [r.id for r in reached_rows + abandoned_rows],
+                },
             )
         )
 
@@ -74,6 +93,11 @@ def compute_browser_traits(rows: list[BrowserActivityEvent]) -> list[TraitSnapsh
                         confidence=0.8,
                         evidence=1,
                         provenance=["browser"],
+                        derivation={
+                            "formula": "latest payment-method choice",
+                            "inputs": {"choice": pay},
+                            "event_ids": [r.id],
+                        },
                     )
                 )
             break

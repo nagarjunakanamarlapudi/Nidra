@@ -53,7 +53,8 @@ async def test_about_me_reports_opinions_and_dreams(
 ) -> None:
     await UserModelStore(session_factory).write(
         [TraitSnapshot(trait="preference:payment", value="Apple Pay", confidence=0.8,
-                       evidence=2, provenance=["browser"])]
+                       evidence=2, provenance=["browser"],
+                       derivation={"formula": "latest payment-method choice", "event_ids": [42]})]
     )
     dreams = DreamStore(session_factory)
     await dreams.add([NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)])
@@ -61,4 +62,5 @@ async def test_about_me_reports_opinions_and_dreams(
     tools = build_activity_tools(session_factory)
     out = await _tool(tools, "about_me").handler({})
     assert "preference:payment" in out and "Apple Pay" in out
+    assert "derived by: latest payment-method choice" in out  # evidence chain shown
     assert "Japan trip" in out  # active dreams surfaced too

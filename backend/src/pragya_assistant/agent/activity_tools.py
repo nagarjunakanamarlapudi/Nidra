@@ -24,6 +24,19 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC).replace(tzinfo=None)
 
 
+def _format_trait(s: Any) -> str:
+    base = (
+        f"- {s.trait}: {s.value} "
+        f"(confidence {s.confidence}, from {', '.join(s.provenance or [])})"
+    )
+    d = s.derivation or {}
+    formula = d.get("formula") if isinstance(d, dict) else None
+    n = len(d.get("event_ids", [])) if isinstance(d, dict) else 0
+    if formula:
+        base += f"\n    └ derived by: {formula}" + (f" ({n} signals)" if n else "")
+    return base
+
+
 def build_activity_tools(session_factory: async_sessionmaker[AsyncSession]) -> list[Tool]:
     events = BrowserActivityEventStore(session_factory)
     user_model = UserModelStore(session_factory)
@@ -69,11 +82,7 @@ def build_activity_tools(session_factory: async_sessionmaker[AsyncSession]) -> l
         if model:
             parts.append(
                 "What I know about you (grounded in your activity):\n"
-                + "\n".join(
-                    f"- {s.trait}: {s.value} "
-                    f"(confidence {s.confidence}, from {', '.join(s.provenance or [])})"
-                    for s in model
-                )
+                + "\n".join(_format_trait(s) for s in model)
             )
         if active:
             parts.append(

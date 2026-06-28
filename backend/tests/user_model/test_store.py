@@ -13,6 +13,33 @@ from pragya_assistant.user_model.store import (
 )
 
 
+async def test_snapshot_carries_derivation_evidence_chain(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Each opinion records HOW it was derived: formula, inputs, and the exact
+    contributing event IDs — so a trait is traceable to its facts."""
+    store = UserModelStore(session_factory)
+    await store.write(
+        [
+            TraitSnapshot(
+                trait="preference:payment",
+                value="Apple Pay",
+                confidence=0.8,
+                evidence=1,
+                provenance=["browser"],
+                derivation={
+                    "formula": "latest payment-method choice",
+                    "inputs": {"choice": "Apple Pay"},
+                    "event_ids": [42],
+                },
+            )
+        ]
+    )
+    row = (await store.current_model())[0]
+    assert row.derivation["formula"] == "latest payment-method choice"
+    assert row.derivation["event_ids"] == [42]
+
+
 async def test_write_and_current_model_returns_latest_per_trait(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
