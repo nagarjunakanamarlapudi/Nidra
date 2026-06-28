@@ -7,6 +7,8 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Effort } from "@/lib/api";
 
 export type Role = "user" | "assistant";
@@ -205,15 +207,79 @@ function MessageBubble({ role, text }: { role: Role; text: string }) {
     <div className={isUser ? "flex justify-end" : "flex justify-start"}>
       <div
         className={[
-          "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+          "max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
           isUser
-            ? "rounded-br-sm bg-[var(--bubble-user)] text-[var(--bubble-user-text)]"
+            ? "whitespace-pre-wrap rounded-br-sm bg-[var(--bubble-user)] text-[var(--bubble-user-text)]"
             : "rounded-bl-sm border border-border bg-[var(--bubble-assistant)] text-foreground",
         ].join(" ")}
       >
-        {text}
+        {/* User text is shown verbatim (no markdown interpretation of their `*`/`_`);
+            assistant replies are rendered as Markdown. */}
+        {isUser ? text : <Markdown>{text}</Markdown>}
       </div>
     </div>
+  );
+}
+
+/**
+ * Tailwind-styled element map for assistant Markdown. We map each element
+ * explicitly (rather than pulling in @tailwindcss/typography) so spacing stays
+ * tight inside a chat bubble and colors track our design tokens. No raw HTML is
+ * rendered (react-markdown's safe default — no rehype-raw), so this is XSS-safe.
+ */
+const markdownComponents: Components = {
+  p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="my-2 list-disc space-y-1 pl-5 marker:text-muted first:mt-0 last:mb-0">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="my-2 list-decimal space-y-1 pl-5 marker:text-muted first:mt-0 last:mb-0">{children}</ol>
+  ),
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent underline underline-offset-2 hover:opacity-80"
+    >
+      {children}
+    </a>
+  ),
+  h1: ({ children }) => <h1 className="mb-1 mt-3 text-base font-semibold first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="mb-1 mt-3 text-sm font-semibold first:mt-0">{children}</h2>,
+  h3: ({ children }) => <h3 className="mb-1 mt-3 text-sm font-medium first:mt-0">{children}</h3>,
+  code: ({ children }) => (
+    <code className="rounded bg-surface-muted px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
+  ),
+  pre: ({ children }) => (
+    <pre className="pragya-scroll my-2 overflow-x-auto rounded-lg bg-surface-muted p-3 text-[0.85em] first:mt-0 last:mb-0 [&>code]:!rounded-none [&>code]:!bg-transparent [&>code]:!p-0">
+      {children}
+    </pre>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="my-2 border-l-2 border-border pl-3 text-muted">{children}</blockquote>
+  ),
+  hr: () => <hr className="my-3 border-border" />,
+  table: ({ children }) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="w-full border-collapse text-left text-[0.9em]">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border border-border px-2 py-1 font-semibold">{children}</th>
+  ),
+  td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
+};
+
+/** Render assistant text as Markdown (GFM: tables, strikethrough, autolinks). */
+function Markdown({ children }: { children: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {children}
+    </ReactMarkdown>
   );
 }
 
