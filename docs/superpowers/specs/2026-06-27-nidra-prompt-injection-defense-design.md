@@ -93,14 +93,22 @@ fail safe, never fall open. This is an explicit requirement, verified by test.
 
 ## 4. Per-job confinement matrix
 
-| LLM job | Tools allowed | Native (bash/file/web) | Output scrubbed |
-|---|---|---|---|
-| **opinion-maker** | read-only `query_*` only | none | yes |
-| **dreamer** | none | none | yes |
-| **digest** | none | none | yes |
-| **chat** | memory/calendar/email (read+draft), tasks | **WebSearch only — drop raw WebFetch** (decision §6) | yes |
+Confinement bans **dangerous capabilities** (code exec, file write, send, outbound egress) —
+**not** read-only data access. Read-only query tools are how a confined agent gets the grounded
+information it needs *safely*: they only pull the user's own data into context, which output-
+scrubbing (§5.2) + no-secrets-in-context (§5.3) already cover. An agent with no read tools and
+no pushed data has nothing to reason about — that is broken, not safe.
 
-No job gets bash, file, write, send-email, or arbitrary WebFetch. Email stays draft-only.
+| LLM job | Read-only data tools | Dangerous (exec/write/send/egress) | Output scrubbed |
+|---|---|---|---|
+| **opinion-maker** | `query_*` (browsing/calendar/email/memory) | none | yes |
+| **dreamer** | `query_*` + `read_opinions` + `read_track_record` | none | yes |
+| **digest** | `query_*` (activity it summarizes) | none | yes |
+| **chat** | memory/calendar/email (read+**draft**), tasks | web via **egress-guarded** WebSearch+WebFetch only (§6) | yes |
+
+No job gets bash, file-write, send-email, or arbitrary egress. Email is draft-only. **Web
+egress exists only in chat, only through the egress guard.** Background jobs read freely
+(their own data) but cannot act or exfiltrate.
 
 ## 5. The defense layers (what each guarantees)
 
@@ -113,19 +121,34 @@ No job gets bash, file, write, send-email, or arbitrary WebFetch. Email stays dr
 3. **No secrets in context** (HARD) — tools/collectors return only categories/labels/last-4,
    never raw secrets.
 4. **Instruction↔data separation** (soft, defense-in-depth) — fencing + hardening preamble.
+5. **Egress guard** (HARD) — `agent/egress.py` `egress_allowed(url) -> (bool, reason)`: blocks an
+   outbound fetch whose URL carries exfiltration-shaped data — secret-shaped tokens (via
+   `scrub_secrets`) or bulk base64/hex/percent-encoded payloads in path/query beyond a small
+   threshold. Wired into every fetch path (§6). Lets WebFetch stay usable while blocking data
+   smuggling.
 
-## 6. Decision: chat WebFetch
-Chat is the one component with an outbound-fetch capability (the real exfiltration path).
-**Decision: keep WebSearch, drop raw `WebFetch`** — chat retains web lookup utility while
-removing the arbitrary-URL fetch an injection would use to exfiltrate. (Revisit if WebSearch
-alone proves insufficient for chat UX.)
+## 6. Decision: chat WebFetch is KEPT, behind an egress guard
+WebFetch is needed, so we keep it. Removing the capability is not the defense — **controlling
+what can leave** is. Every outbound fetch passes the deterministic egress guard (§5.5):
+- The guard is a single shared `egress_allowed(url)` — normal lookups pass; an injection
+  trying to smuggle the user's data out in `https://attacker/?x=<...>` (secret-shaped or
+  bulk-encoded) is blocked.
+- **Engine-agnostic:** the guard logic is one function, wired into every fetch path — for
+  claude-code's native WebFetch via the SDK **permission callback** (replace blanket
+  `bypassPermissions` with a callback that auto-allows the safe read-only tools + WebSearch and
+  runs `egress_allowed` on WebFetch); for any loop/our-own fetch tool, inside the tool. The
+  guard ALWAYS runs, whatever the engine.
+- With output-scrub (§5.2) + no-secrets-in-context (§5.3), WebFetch stays functional while
+  injection-driven exfiltration is blocked.
 
 ## 7. Testing (adversarial, per engine path)
 
-- **Confinement:** assert the built engine's allowlist for each job equals the matrix (opinion
-  = query tools only; dreamer/digest = none); assert across `agent_engine ∈ {claude-code,
-  codex, loop}` the confined builders never expose bash/file/WebFetch. Codex confined-build
-  test (minimal or refuse).
+- **Confinement:** assert each job's allowlist equals the matrix — opinion = `query_*` only;
+  dreamer = `query_*` + `read_opinions` + `read_track_record`; digest = `query_*`; and across
+  `agent_engine ∈ {claude-code, codex, loop}` the confined builders expose **no** dangerous
+  tool (bash/file-write/send/egress). Codex confined-build test (minimal or refuse — fail safe).
+- **Egress guard:** `egress_allowed` blocks a URL carrying a secret-shaped or bulk-encoded
+  payload, and allows an ordinary lookup URL.
 - **GuardedEngine:** a fake inner engine returns text containing a fake API key / account
   number / "BEGIN PRIVATE KEY" → wrapper output is redacted; applies regardless of inner.
 - **secret_scrub:** unit tests for each pattern (card, account, `sk-`, `AKIA`, bearer, PEM).
@@ -137,9 +160,10 @@ alone proves insufficient for chat UX.)
 
 ## 8. Where applied (rollout)
 - **opinion-maker** — built confined from the start (this upgrade).
-- **dreamer, digest** — switch off the web-enabled chat engine onto confined engines.
-- **chat** — wrap in `GuardedEngine`; drop raw WebFetch.
-All four go through the factory + wrapper, so adding a future LLM job inherits the defense.
+- **dreamer, digest** — switch off the web-enabled chat engine onto confined engines with
+  their read-only data tools (so they still have information to work with).
+- **chat** — wrap in `GuardedEngine`; keep WebFetch behind the egress guard (permission callback).
+All go through the factory + wrapper, so adding a future LLM job inherits the defense.
 
 ## 9. Decisions log
 - Guarantees come from **code** (confinement + output scrub + no-secrets-in-context), not
@@ -147,5 +171,6 @@ All four go through the factory + wrapper, so adding a future LLM job inherits t
 - Enforced at **shared chokepoints** (factory construction + `GuardedEngine` wrapper + input
   helpers) so they hold for **every** engine path; **Codex** is explicitly confined or refused
   (fail safe).
-- Background jobs run **tool-minimal**; chat keeps WebSearch but **not** raw WebFetch.
+- Background jobs get **read-only data tools only** (no exec/write/send/egress) — they read
+  freely but cannot act or exfiltrate; chat keeps WebSearch **and** WebFetch behind the egress guard.
 - Output scrubbing is **always-on** via the wrapper, never optional per call site.
