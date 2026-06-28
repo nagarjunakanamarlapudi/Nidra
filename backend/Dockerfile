@@ -28,6 +28,20 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 WORKDIR /app
 
+# Claude Code CLI — the claude-code agent engine (claude-agent-sdk) drives the
+# `claude` binary as a subprocess, so the runtime image needs Node + the CLI.
+# Auth + base URL come from the environment at runtime (ANTHROPIC_BASE_URL +
+# ANTHROPIC_AUTH_TOKEN for the DigitalOcean inference gateway), so nothing
+# secret is baked into the image.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code \
+ && npm cache clean --force \
+ && apt-get purge -y --auto-remove gnupg \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 10001 pragya
 COPY --from=builder --chown=pragya:pragya /app /app
 RUN chmod +x /app/entrypoint.sh

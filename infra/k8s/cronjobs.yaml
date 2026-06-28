@@ -1,0 +1,228 @@
+# The scheduled work, translated from infra/cron/entrypoint.sh into native
+# CronJobs. Each is a tiny authenticated curl to the in-cluster API. Schedules +
+# timezone mirror your .env (digest 21:00, dream 00:00, finance 06:30, opinions
+# hourly at :07, weekly digest Mon 21:00), America/Los_Angeles. `-m 280` caps each
+# call; concurrencyPolicy Forbid prevents overlap with a still-running job.
+# NOTE: args use folded (>-) block scalars — an unquoted "Authorization: Bearer"
+# would otherwise be parsed as a YAML map.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-digest
+spec:
+  schedule: "0 21 * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/digests/run"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-finance-sync
+spec:
+  schedule: "30 6 * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/finance/sync"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+---
+# Nightly: refresh opinions from real signals, then dream on top of them.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-dream
+spec:
+  schedule: "0 0 * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 1200
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/opinions/refresh"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}" ;
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/dreams/run"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-opinions
+spec:
+  schedule: "7 * * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/opinions/refresh"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-digest-weekly
+spec:
+  schedule: "0 21 * * 1"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/digests/run-weekly"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+---
+# Every 15 min: resolve open scenario branches against real activity (honest rules)
+# and reconcile mis-ranked batches (diagnose + hedged lesson + ΔState refresh).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-scenario-verify
+spec:
+  schedule: "*/15 * * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/scenarios/verify"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+---
+# Every 3 hours: verify first (fresh track record), then generate a new batch of
+# competing next-action predictions.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-scenario-generate
+spec:
+  schedule: "17 */3 * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 1200
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: curl
+              image: curlimages/curl:8.11.1
+              envFrom:
+                - secretRef:
+                    name: pragya-env
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/scenarios/verify"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}" ;
+                  curl -fsS -m 280 -X POST
+                  "http://backend.nidra.svc.cluster.local:8000/scenarios/run"
+                  -H "Authorization: Bearer ${API_AUTH_TOKEN}"

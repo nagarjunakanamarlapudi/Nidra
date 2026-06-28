@@ -4,6 +4,9 @@
 !.env.example
 *.pem
 *.key
+# k8s Secret material (synthesized into the in-cluster Secret; never committed)
+secret.env
+infra/k8s/secret.env
 
 # ---- Python ----
 __pycache__/
@@ -51,3 +54,6 @@ backups/
 # ---- Local verification artifacts (UI screenshots, playwright output) ----
 /connectors-*.png
 .playwright-mcp/
+
+# huge generated demo haystack (do not commit)
+demo/raw_memory.md

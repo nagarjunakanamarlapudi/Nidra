@@ -20,7 +20,6 @@ export default function Home() {
         contentContainerStyle={{ paddingTop: insets.top + 18, paddingHorizontal: 18, paddingBottom: 150 }}
       >
         <View style={styles.presence}>
-          <Text style={styles.eyebrow}>{greeting.eyebrow}</Text>
           <Text style={styles.hello}>{greeting.hello}</Text>
           <Text style={styles.note}>{greeting.note}</Text>
         </View>
@@ -39,8 +38,7 @@ export default function Home() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.night0 },
   presence: { paddingHorizontal: 6 },
-  eyebrow: { fontFamily: fonts.uiSemi, fontSize: 12, letterSpacing: 2, color: colors.inkLo },
-  hello: { fontFamily: fonts.voice, fontSize: 32, lineHeight: 34, color: colors.inkHi, marginTop: 6 },
+  hello: { fontFamily: fonts.voice, fontSize: 32, lineHeight: 34, color: colors.inkHi },
   note: { fontFamily: fonts.voice, fontSize: 16, lineHeight: 24, color: colors.inkMid, marginTop: 9 },
   canvasLabel: { fontFamily: fonts.uiSemi, fontSize: 11.5, letterSpacing: 1.6, color: colors.inkLo, marginTop: 26, marginBottom: 14, marginHorizontal: 6 },
   canvas: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },

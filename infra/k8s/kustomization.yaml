@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nidra
+
+resources:
+  - namespace.yaml
+  - backend.yaml
+  - cronjobs.yaml
+  - frontend.yaml
+
+# The app config + secrets, synthesized into the `pragya-env` Secret from a local,
+# gitignored env file. Copy secret.env.example -> secret.env and fill it in before
+# `kubectl apply -k`. Name suffix hashing is off so the Deployment/CronJobs can
+# reference a stable `pragya-env` (bump the image tag / rollout-restart to pick up
+# secret changes).
+secretGenerator:
+  - name: pragya-env
+    envs:
+      - secret.env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+# ingress.yaml is intentionally NOT included here — it needs the load-balancer IP
+# substituted into the sslip.io host and is applied separately (see README).

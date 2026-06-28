@@ -7,7 +7,9 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.praveenk.nidra",
+      "appleTeamId": "CW2NERWP59"
     },
     "android": {
       "adaptiveIcon": {

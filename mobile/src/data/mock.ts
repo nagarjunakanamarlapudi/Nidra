@@ -15,9 +15,20 @@ import type { ChatMessage, World, WorldDetail } from './models';
 const img = (seed: string, w: number, h: number) =>
   `https://picsum.photos/seed/${seed}/${w}/${h}`;
 
+// Time-of-day word, computed live against the user's clock so the greeting never
+// says "Morning" in the afternoon. Shared with the chat sheet's opener.
+export function greetingWord(d = new Date()): string {
+  const h = d.getHours();
+  if (h < 12) return 'Morning';
+  if (h < 18) return 'Afternoon';
+  return 'Evening';
+}
+
 export const greeting = {
-  eyebrow: 'SATURDAY · JUNE 27',
-  hello: 'Morning, Ishaan.',
+  // getter so it re-evaluates on each render rather than freezing at module load
+  get hello() {
+    return `${greetingWord()}, Ishaan.`;
+  },
   note: 'Three of these are waiting on a decision from you. I’ve done the legwork on each.',
 };
 

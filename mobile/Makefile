@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install start ios android typecheck bundle clean
+.PHONY: help install start ios android devices prebuild run device deploy typecheck bundle clean
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -16,6 +16,21 @@ ios:  ## Launch the app in the iOS Simulator (Expo Go)
 
 android:  ## Launch the app in the Android emulator (Expo Go)
 	npx expo start --android
+
+devices:  ## List connected iPhones (copy a name for DEVICE=)
+	xcrun devicectl list devices
+
+prebuild:  ## Generate the native ios/ project (needs ios.bundleIdentifier in app.json)
+	npx expo prebuild -p ios
+
+run:  ## Build a dev build, then PICK a connected device or simulator to launch on
+	npx expo run:ios --device
+
+device:  ## Install on a cabled iPhone (debug; keeps Metro tethered). DEVICE="Name" to target one
+	npx expo run:ios $(if $(DEVICE),--device "$(DEVICE)",--device)
+
+deploy:  ## Install standalone on a cabled iPhone (release; runs untethered). DEVICE="Name" optional
+	npx expo run:ios --configuration Release $(if $(DEVICE),--device "$(DEVICE)",--device)
 
 typecheck:  ## Type-check with tsc (no emit)
 	npx tsc --noEmit

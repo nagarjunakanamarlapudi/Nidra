@@ -99,7 +99,9 @@ def build_activity_tools(session_factory: async_sessionmaker[AsyncSession]) -> l
             description=(
                 "Look at what the user recently browsed, read, and searched for "
                 "(from ambient capture). Use for questions like 'what did I browse "
-                "today?' or 'what have I been reading about?'."
+                "today?' or 'what have I been reading about?', AND to ground planning "
+                "or recommendations in what they've recently been looking into — pass "
+                "a wider 'days' window (e.g. 30) when grounding a substantive request."
             ),
             input_schema={
                 "type": "object",
@@ -119,7 +121,11 @@ def build_activity_tools(session_factory: async_sessionmaker[AsyncSession]) -> l
             description=(
                 "Read Nidra's model of the user — the durable opinions/traits it has "
                 "formed from their activity, plus current dream hunches. Use for "
-                "'what do you know about me?', 'what are my interests/habits?'."
+                "'what do you know about me?', 'what are my interests/habits?', AND "
+                "call it FIRST to ground and personalize any substantive request "
+                "(planning, recommendations, advice) in the user's known interests, "
+                "intents, and constraints — not only when they explicitly ask what "
+                "you know about them."
             ),
             input_schema={
                 "type": "object",

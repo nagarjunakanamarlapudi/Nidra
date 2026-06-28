@@ -92,7 +92,12 @@ export function RiseSheet({
           </View>
         </View>
       </GestureDetector>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.body}
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+      >
         {children}
       </ScrollView>
       <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.dim, dimStyle]} />

@@ -1,0 +1,28 @@
+# TLS ingress for the web UI. Applied separately with the app host substituted:
+#   export LB_IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+#   export APPHOST="app.${LB_IP//./-}.sslip.io"
+#   sed "s/__APPHOST__/${APPHOST}/g" infra/k8s/ingress-frontend.yaml | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: nidra
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - "__APPHOST__"
+      secretName: frontend-tls
+  rules:
+    - host: "__APPHOST__"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

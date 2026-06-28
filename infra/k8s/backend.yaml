@@ -1,0 +1,88 @@
+# The API. One replica: the image's entrypoint runs `alembic upgrade head` on
+# boot, so we use a Recreate strategy to avoid two pods racing migrations. The
+# claude-code engine spawns the `claude` CLI (baked into the image) and writes
+# session state under CLAUDE_CONFIG_DIR, which we back with a writable emptyDir.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      imagePullSecrets:
+        - name: registry-nidra-pragya
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001 # make the emptyDir writable by the pragya user
+      containers:
+        - name: backend
+          image: registry.digitalocean.com/nidra-pragya/backend:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          # All app config + secrets come from the pragya-env Secret (mirrors the
+          # compose env_file). A few non-secret runtime knobs are set inline.
+          envFrom:
+            - secretRef:
+                name: pragya-env
+          env:
+            - name: HOME
+              value: /home/pragya
+            - name: CLAUDE_CONFIG_DIR
+              value: /home/pragya/.pragya-assistant
+            - name: TZ
+              value: America/Los_Angeles
+          volumeMounts:
+            - name: claude-config
+              mountPath: /home/pragya/.pragya-assistant
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30 # ~5 min headroom for first-boot migrations
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1500m"
+              memory: 1536Mi
+      volumes:
+        - name: claude-config
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
