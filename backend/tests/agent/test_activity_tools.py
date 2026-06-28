@@ -57,7 +57,9 @@ async def test_about_me_reports_opinions_and_dreams(
                        derivation={"formula": "latest payment-method choice", "event_ids": [42]})]
     )
     dreams = DreamStore(session_factory)
-    await dreams.add([NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)])
+    await dreams.add(
+        [NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)]
+    )
 
     tools = build_activity_tools(session_factory)
     out = await _tool(tools, "about_me").handler({})

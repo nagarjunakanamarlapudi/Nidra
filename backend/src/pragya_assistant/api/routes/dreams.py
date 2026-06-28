@@ -7,6 +7,7 @@ never writes Opinions directly.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Annotated, Any
 
 import httpx
@@ -20,11 +21,14 @@ from pragya_assistant.api.deps import get_agent, get_session_factory, get_settin
 from pragya_assistant.config import Settings
 from pragya_assistant.connectors.browser_activity.dreamer import ollama_dream_fn
 from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
+from pragya_assistant.connectors.google_calendar.store import CalendarEventStore
+from pragya_assistant.email_inbox.service import build_email_service
+from pragya_assistant.tasks.store import TaskStore
 from pragya_assistant.user_model.dreamer import DreamerService, engine_dream_fn
 from pragya_assistant.user_model.dreams import DreamStore
-from pragya_assistant.user_model.extractors import BrowserExtractor
+from pragya_assistant.user_model.facts import FactDigestBuilder, PreferenceReader
 from pragya_assistant.user_model.feedback import DreamFeedbackService
-from pragya_assistant.user_model.opinions import OpinionFormer
+from pragya_assistant.user_model.opinion_workflow import OpinionWorkflow
 from pragya_assistant.user_model.store import UserModelStore
 
 router = APIRouter(tags=["dreams"], dependencies=[Depends(require_token)])
@@ -74,13 +78,35 @@ async def record_outcome(
 
 
 @router.post("/opinions/refresh")
-async def refresh_opinions(session_factory: SessionFactory) -> dict[str, Any]:
-    """Re-form the user model from grounded signals (deterministic, no LLM).
-    Browser source today; finance/calendar extractors slot in when active."""
-    events = BrowserActivityEventStore(session_factory)
+async def refresh_opinions(
+    settings: AppSettings, session_factory: SessionFactory, agent: Agent
+) -> dict[str, Any]:
+    """Form fact-grounded opinions via the workflow (digest -> group -> form ->
+    validate -> review -> persist). Browser+calendar+email+memory; finance is
+    Phase 2. Same engine selection as the dreamer. Manual + hourly via cron."""
+    now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+    facts = await FactDigestBuilder(
+        browser=BrowserActivityEventStore(session_factory),
+        calendar=CalendarEventStore(session_factory),
+        email=build_email_service(settings),
+        prefs=PreferenceReader(session_factory),
+        tasks=TaskStore(session_factory),
+        now=now,
+    ).build()
+    if settings.agent_engine == "ollama":
+        fn = ollama_dream_fn(settings.ollama_base_url, settings.dream_model)
+    else:
+        fn = engine_dream_fn(agent)
     model = UserModelStore(session_factory)
-    formed = await OpinionFormer([BrowserExtractor(events)], model).form()
-    return {"ok": True, "traits": len(formed)}
+    workflow = OpinionWorkflow(model, group_fn=fn, form_fn=fn, review_fn=fn)
+    try:
+        formed = await workflow.run(facts)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Opinion workflow unavailable: {exc}",
+        ) from exc
+    return {"ok": True, "traits": len(formed), "facts": len(facts)}
 
 
 @router.post("/dreams/run")

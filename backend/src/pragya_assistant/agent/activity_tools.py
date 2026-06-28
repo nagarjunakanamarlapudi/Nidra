@@ -31,7 +31,9 @@ def _format_trait(s: Any) -> str:
     )
     d = s.derivation or {}
     formula = d.get("formula") if isinstance(d, dict) else None
-    n = len(d.get("event_ids", [])) if isinstance(d, dict) else 0
+    n = 0
+    if isinstance(d, dict):
+        n = len(d.get("event_ids", [])) + len(d.get("refs", []))
     if formula:
         base += f"\n    └ derived by: {formula}" + (f" ({n} signals)" if n else "")
     return base

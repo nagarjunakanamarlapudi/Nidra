@@ -16,7 +16,9 @@ KEY = "browser_activity"
 
 
 async def _one_dream(dreams: DreamStore) -> int:
-    await dreams.add([NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)])
+    await dreams.add(
+        [NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)]
+    )
     return (await dreams.active())[0].id
 
 

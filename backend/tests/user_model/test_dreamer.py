@@ -79,7 +79,9 @@ async def test_dreamer_feeds_track_record_into_prompt(
     """In-context RSI: prior resolved dreams + current opinions condition the next dream."""
     opinions = UserModelStore(session_factory)
     dreams = DreamStore(session_factory)
-    await opinions.write([TraitSnapshot(trait="decisiveness", value=0.8, confidence=0.7, evidence=5)])
+    await opinions.write(
+        [TraitSnapshot(trait="decisiveness", value=0.8, confidence=0.7, evidence=5)]
+    )
     await dreams.add([NewDream(hypothesis="Suggested a car upgrade", kind="need", confidence=0.5)])
     did = (await dreams.active())[0].id
     await dreams.resolve(did, status="confirmed", signal="acted", at=dt.datetime(2026, 6, 28))

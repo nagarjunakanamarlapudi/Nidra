@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import httpx
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -10,6 +12,7 @@ from pragya_assistant.connectors.browser_activity.store import (
     BrowserActivityEventStore,
     IngestedEvent,
 )
+from pragya_assistant.llm.types import ChatResult
 from pragya_assistant.memory.db import create_session_factory
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import UserModelStore
@@ -20,6 +23,10 @@ AUTH = {"Authorization": "Bearer token"}
 KEY = "browser_activity"
 
 
+def _stop(text: str) -> ChatResult:
+    return ChatResult(text=text, tool_calls=(), finish_reason="stop", usage={})
+
+
 async def test_dreams_requires_token(build_test_app: AppBuilder) -> None:
     app = build_test_app(ScriptedChatProvider([]))
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -28,34 +35,35 @@ async def test_dreams_requires_token(build_test_app: AppBuilder) -> None:
         assert (await c.post("/opinions/refresh")).status_code == 401
 
 
-async def test_opinions_refresh_forms_grounded_opinions(
+async def test_opinions_refresh_runs_workflow(
     engine: AsyncEngine, build_test_app: AppBuilder
 ) -> None:
-    """Deterministic: refresh runs the OpinionFormer over real browser signals."""
-    events = BrowserActivityEventStore(create_session_factory(engine))
-    await events.add_events(
+    """Refresh forms a fact-grounded, cited opinion (the 3 LLM stages are scripted)."""
+    sf = create_session_factory(engine)
+    await BrowserActivityEventStore(sf).add_events(
         KEY,
-        [
-            IngestedEvent(
-                client_id="i1", event_type="interaction", ts=__import__("datetime").datetime(2026, 6, 28, 9),
-                data={"action": "choose", "group": "Payment methods", "value": "Apple Pay"},
-                metrics={"latencyMs": 800},
-            )
-        ],
+        [IngestedEvent(client_id="s1", event_type="search",
+                       ts=dt.datetime(2026, 6, 28, 9), data={"query": "flights to tokyo"})],
     )
-    app = build_test_app(ScriptedChatProvider([]))
+    group = '{"themes": [{"label": "travel", "fact_ids": ["f1"]}]}'
+    form = ('{"opinions": [{"trait": "intent:travel", "value": "planning a Tokyo trip", '
+            '"confidence": 0.9, "evidence_fact_ids": ["f1"]}]}')
+    review = '{"reviews": [{"trait": "intent:travel", "keep": true, "confidence_adjustment": 0}]}'
+    app = build_test_app(ScriptedChatProvider([_stop(group), _stop(form), _stop(review)]))
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         resp = await c.post("/opinions/refresh", headers=AUTH)
-    assert resp.status_code == 200 and resp.json()["traits"] >= 1
+    assert resp.status_code == 200 and resp.json()["traits"] == 1
 
-    model = UserModelStore(create_session_factory(engine))
-    traits = {s.trait for s in await model.current_model()}
-    assert "preference:payment" in traits  # grounded opinion, written by the former
+    current = {s.trait: s for s in await UserModelStore(sf).current_model()}
+    assert "intent:travel" in current
+    assert current["intent:travel"].derivation["event_ids"] == [1]
 
 
 async def test_list_and_record_outcome(engine: AsyncEngine, build_test_app: AppBuilder) -> None:
     dreams = DreamStore(create_session_factory(engine))
-    await dreams.add([NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)])
+    await dreams.add(
+        [NewDream(hypothesis="Planning a Japan trip", kind="foresight", confidence=0.6)]
+    )
 
     app = build_test_app(ScriptedChatProvider([]))
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
