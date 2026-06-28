@@ -1,187 +1,215 @@
-# Nidra — Opinion-Forming Workflow (fact-grounded, LLM, hourly)
+# Nidra — Opinion-Forming as a Tool-Using Agent
 
 - **Date:** 2026-06-27
-- **Status:** Approved design, pre-implementation
-- **Refines:** the Opinion layer of `2026-06-27-nidra-opinions-dreams-rsi-design.md`.
-  Replaces the deterministic trait heuristics (which produced nonsense —
-  decisiveness from page-load latency, deliberation from button re-clicks).
+- **Status:** Approved design (revised), pre-implementation
+- **Revises:** the first cut of this spec, which formed opinions from a *static, pre-fetched
+  fact digest* fed to one-shot LLM calls. This revision makes the opinion-maker a
+  **tool-using ReAct agent** that *pulls* the data it needs, widens the calendar
+  connector to carry past **and** future, and **decouples** the opinion subsystem from
+  the dreamer (shared neutral utilities, separate routes, legacy duplicate retired).
+- **Builds on:** the architecture in `2026-06-27-nidra-opinions-dreams-rsi-design.md`
+  (Opinions = grounded facts; Dreams = speculation; one-way valve between them).
 
-## 1. Why
+## 0. Why this revision
 
-The deterministic heuristics manufactured *adjectives about the user* from thin
-proxies, with false confidence. The failure was the **method**, not the LLM: a
-well-prompted LLM reading the *actual facts* would never conclude "decisiveness
-0.0 from latency." So opinions are formed by an LLM — but **strictly fact-bound**:
-high-confidence, fact-based, **cited**, no imagination. Speculation stays in Dreams.
+Three problems with the first cut:
 
-## 2. Principles
+1. **Calendar was inert.** The fact builder queried calendar *backward* (`now−30d → now`),
+   but the connector only persists `[now−1d, now+30d]` — the windows barely overlap, so
+   the strongest signal (an upcoming booked flight; a recurring weekly 1:1) never became a
+   fact. Both **past routines** and **future commitments** describe the user and must be
+   available.
+2. **The opinion-maker was handed a fixed snapshot.** A pre-fetched digest can't decide
+   "I should look back 90 days for routines, or ahead 60 for plans." The opinion-maker
+   should **query data as it needs it** — especially calendar windows.
+3. **Opinions were coupled to the dreamer.** `opinion_workflow.py` imported `extract_json`
+   from `user_model/dreamer.py`; the opinions route imported `engine_dream_fn` (dreamer) and
+   `ollama_dream_fn` (a *connector* module). There are two dreamer modules, two dream
+   routes, `extract_json` duplicated, and `DreamFn` defined three times. Opinions and
+   dreams are deliberately separate subsystems; they must not import each other.
 
-- **Opinions = facts, not guesses.** Only state what the evidence directly supports.
-- **Cite-or-omit.** Every opinion cites the exact signals (`event_ids`) behind it;
-  uncited opinions are dropped. This makes "fact-based" *enforceable*, not hoped-for.
-- **No imagination in opinions.** Future-guessing / unobservable personality traits
-  are omitted — they are Dreams (speculative, action-validated).
-- **Auditable.** Every opinion carries a `derivation` evidence chain to its facts.
-- **Grounded confidence.** The LLM proposes confidence, but it is capped by evidence
-  strength (citation count × source diversity) — never blindly trusted.
+## 1. Principles (the invariants do not change)
 
-## 3. The workflow (4 stages → persist)
+- **Opinions = facts, not guesses.** High-confidence, fact-based, **cited**, no imagination.
+  Speculation stays in Dreams.
+- **Cite-or-omit, enforced deterministically.** Every opinion cites the exact signals
+  behind it; uncited opinions are dropped by code, not trusted to the prompt.
+- **Confidence is earned.** The LLM proposes confidence; a deterministic step caps it by
+  evidence strength; the reviewer can only lower it.
+- **Auditable.** Every opinion persists a `derivation` evidence chain to its facts.
+- **NEW — the opinion-maker investigates.** It is an agent with tools that pulls data
+  (browser, calendar past+future, email, memory) as needed, rather than consuming a fixed
+  digest.
 
-A backend pipeline (plain Python chaining the stages; the two LLM stages take an
-injected completion fn so tests are deterministic — same pattern as the dreamer).
+## 2. Architecture — the opinion agent
 
 ```mermaid
 flowchart TD
-  S["Signals: browser + calendar + email + memory\n(all sources except finance)"] --> D["Stage 0: Fact Digest Builder (deterministic)\nflat facts, each tagged with source event/message ids"]
-  D --> G["(a) Fact-Grouping Agent (LLM)\ncluster facts into coherent themes"]
-  G --> O["(b) Opinion-Forming Agent (LLM)\nper theme: high-confidence opinions, each citing fact_ids"]
-  O --> V["(c) Citation-Grounding Validator (deterministic)\ndrop uncited/unresolvable; cap confidence by evidence"]
-  V --> R["(d) Reviewer Agent (LLM)\nverify the cited evidence actually supports the claim;\ndrop/downgrade overreach"]
-  R --> P["Persist -> user_model_snapshots (+ derivation chain)"]
+  subgraph Agent["Opinion-maker — ReAct loop (engine-agnostic)"]
+    M["LLM turn: emit JSON →\nACTION(tool) or FINAL(opinions)"]
+    M -->|ACTION| T["run query tool"]
+    T --> L["Evidence Ledger\n(every returned Fact, f1..fn)"]
+    L --> M
+  end
+  M -->|FINAL| V["validate_citations (deterministic)\ncite-or-omit · dedup · cap confidence"]
+  V --> R["review_opinions (LLM)\nskeptical 2nd pass · lower-only"]
+  R --> P["persist → user_model_snapshots (+ derivation chain)"]
   P --> C["chat about_me + dreamer read"]
+  Q[("query tools:\ncalendar · browsing · email · memory")] -. available to .- M
 ```
 
-**Stage 0 — Fact Digest Builder (deterministic).** Gathers real signals from **every
-source except finance** (v1) into a flat list of `Fact`s, each carrying the source
-ids it came from. No conclusions. Sources:
-- **browser** (persisted `browser_activity_events`) — searches, reading+engagement, choices, actions → `event_ids`;
-- **calendar** (persisted `calendar_events`) — events → routine/load facts → `event_ids`;
-- **email** (live via `EmailService` — gmail isn't persisted) — recent senders/subjects/dates → `ref: gmail message ids`;
-- **explicit memory** (`people` / `tasks` / `notes` / `preferences`) — already-known facts → `ref: row ids`.
+### 2.1 The agent loop is engine-agnostic (works with the `claude-code` default)
 
-`Fact.event_ids` generalizes to a `ref` per source (browser/calendar row ids,
-gmail message ids, memory row ids) so the evidence chain points back to the right
-place. (**Finance**: Phase 2.)
+The opinion-maker is driven by a **small orchestrated ReAct loop** in our code, over the
+neutral `CompletionFn` (prompt → text). Each turn the model returns JSON that is **either**:
+
+- an **action** — `{"action": "query_calendar", "args": {"days_back": 90, "days_ahead": 60}}` — or
+- the **final** result — `{"opinions": [{"trait","value","confidence","evidence_fact_ids"}]}`.
+
+On an action we run the tool, append its result as an observation, and loop; on final we
+stop. Bounded by `max_steps` (default 6); if the model never emits `opinions`, we terminate
+gracefully with whatever it produced (possibly none).
+
+**Decision (documented for review):** we drive the loop ourselves over a text-action
+protocol rather than using `LoopEngine`'s native `tool_calls`. Reason: the user's default
+brain is `claude-code` (`ClaudeCodeEngine`), a CLI wrapper that does **not** plug into
+`LoopEngine`'s provider/tool-call model. A text-action loop works with **every** engine
+(claude-code, codex, api, ollama) and stays fully testable (inject a `CompletionFn` that
+returns a scripted action→…→final sequence). Tradeoff: text-action parsing is slightly less
+robust than a provider's structured tool-calls; acceptable, and a future optimization can
+use native tool-calls when the brain supports them.
+
+### 2.2 Query tools (the investigation surface)
+
+Each tool is a thin wrapper over the **existing fact collectors** (reused from `facts.py`),
+returning `Fact`s **with their source ids**:
+
+| Tool | Args | Returns |
+|---|---|---|
+| `query_calendar` | `days_back`, `days_ahead` | calendar facts — **past routines + future commitments** |
+| `query_browsing` | `days`, `kinds?`, `query?` | search / reading / choice / action facts |
+| `query_email` | `n` | recent sender+subject facts (refs = message ids) |
+| `query_memory` | — | preferences + open tasks facts |
+
+Tools degrade gracefully: a source that's unconfigured (no email creds) or empty returns no
+facts rather than erroring.
+
+### 2.3 Evidence ledger (how grounding survives "pull")
+
+A per-run **ledger** accumulates every `Fact` every tool returns, numbered `f1..fn` as they
+arrive. This ledger is the **citable universe**: the deterministic `validate_citations` step
+resolves each opinion's `evidence_fact_ids` against it and **drops any opinion that cites
+nothing real**. So moving from "push a digest" to "pull via tools" changes *how* evidence is
+gathered, not the guarantee — the agent cannot cite what it never pulled.
+
+### 2.4 Validate → review → persist (unchanged, already built)
+
+- **`validate_citations`** (deterministic): drop uncited/unresolvable; dedup by trait
+  (keep best-supported); cap `confidence = min(proposed, calibrate(n_citations, n_sources))`;
+  build the `derivation` chain `{method, evidence_fact_ids, fact_summaries, event_ids, refs}`.
+- **`review_opinions`** (LLM, separate call): skeptical second pass; drop overreach; only
+  *lower* confidence (`confidence_adjustment ∈ [-1,0]`); record `derivation["review"]`.
+- **Persist** to `user_model_snapshots` (latest-per-trait on read). No migration — the
+  `derivation` column already exists (0018).
+
+## 3. Calendar connector — sync a wide past+future window
+
+`connectors/google_calendar/connector.py` currently syncs `[now−1d, now+sync_days_ahead]`
+(default 30 ahead). Add a **backward** window:
+
+- New connector config `sync_days_back` (default **90**); keep `sync_days_ahead` (default 30).
+- Sync `[now − sync_days_back, now + sync_days_ahead]`.
+- No schema change (the `calendar_events` table already stores `start`/`end`); just more rows.
+- `test_connection`'s probe window is unchanged (it's a health check, not the data sync).
+
+This makes both routines (recurring past events) and commitments (upcoming events) real,
+queryable signals for `query_calendar`.
+
+## 4. De-coupling & reorg (high-craftsmanship cleanup)
+
+### 4.1 A neutral completion utility
+New `src/pragya_assistant/agent/completion.py` — the single home for the generic LLM
+plumbing both subsystems share:
 
 ```python
-@dataclass
-class Fact:
-    id: str            # local handle for this run, e.g. "f1"
-    kind: str          # search | reading | choice | action | spend | calendar | ...
-    summary: str       # "searched 'flights to tokyo march'", "read 'Best ryokans' (14m, 95%)"
-    event_ids: list[int]
-    source: str        # browser | plaid | calendar
+CompletionFn = Callable[[str], Awaitable[str]]          # was DreamFn (×3)
+def engine_completion_fn(engine: AgentEngine) -> CompletionFn   # was engine_dream_fn
+def ollama_completion_fn(base_url, model, *, timeout=120) -> CompletionFn  # moved out of the connector
+def extract_json(text: str) -> dict[str, Any]           # ONE canonical copy
 ```
 
-**(a) Fact-Grouping Agent (LLM).** Clusters related facts into themes so the next
-stage reasons over coherent groups, not a flat blob. Prompt: *"Group these facts
-into coherent themes. Use ONLY the given facts; do not invent. Output
-`[{label, fact_ids}]`."*
+### 4.2 Repoint and retire
+- `user_model/dreamer.py` and `user_model/opinion_workflow.py` (and the new opinion agent)
+  import from `agent/completion.py`. **No subsystem imports another.**
+- **Retire the legacy duplicate** `connectors/browser_activity/dreamer.py`: its
+  `extract_json`, `ollama_dream_fn`, `DreamFn`, and the old browser-only `DreamerService` +
+  `build_digest` are superseded by `user_model/dreamer.py` (multi-source) and
+  `agent/completion.py`. The old dream endpoint in `api/routes/browser_activity.py` that uses
+  it is superseded by `/dreams/run`; remove it (and migrate/move the `build_digest` tests, or
+  delete them with the code). *If any of the legacy path is still relied on (e.g. an
+  extension call), confirm before deleting — default is delete.*
+- **Split routes:** new `api/routes/opinions.py` holds `/opinions/*`; `api/routes/dreams.py`
+  holds `/dreams/*` only.
 
-**(b) Opinion-Forming Agent (LLM).** Per theme → opinions. Prompt (the discipline):
-*"State durable, HIGH-CONFIDENCE opinions the facts DIRECTLY support. Each opinion
-MUST list the `fact_ids` it rests on. State nothing the facts don't support. NO
-speculation, future-guessing, or unobservable personality traits — omit those
-(they are dreams, handled elsewhere). Output `[{trait, value, confidence,
-evidence_fact_ids}]`."*
+### 4.3 Target layout
+```
+agent/completion.py            ← CompletionFn, engine_completion_fn, ollama_completion_fn, extract_json
+user_model/opinion_agent.py    ← the ReAct loop + tools + evidence ledger   (NEW)
+user_model/opinion_workflow.py → keeps validate_citations / review_opinions / calibrate; run() drives the agent
+user_model/dreamer.py          → dreams only; imports agent/completion
+user_model/facts.py            → Fact + collectors (now also used as tool bodies)
+api/routes/opinions.py         ← /opinions/refresh                          (NEW)
+api/routes/dreams.py           → /dreams/* only
+connectors/google_calendar/connector.py → + sync_days_back
+(retired) connectors/browser_activity/dreamer.py + its route
+```
 
-**(c) Citation-Grounding Validator (deterministic).** For each opinion: resolve
-`evidence_fact_ids` → real `event_ids` via the digest; **drop any opinion with zero
-valid citations**; cap `confidence = min(proposed, calibrated(n_citations,
-n_sources))`. The mechanical anti-hallucination gate — an opinion cannot survive
-without real evidence.
+## 5. What's reused / reworked / retired
 
-**(d) Reviewer Agent (LLM).** For each surviving opinion, an *independent* LLM pass
-judges: **does the cited evidence actually support this claim?** It is prompted to
-be skeptical — drop opinions that overreach the evidence, downgrade confidence when
-the support is thin, keep only well-supported ones. Output per opinion:
-`{keep, confidence_adjustment, reason}`. This is the adversarial check that catches
-plausible-but-unsupported opinions the forming agent produced. (Separate prompt /
-separate call from stage (b), so it's a genuine second opinion, not self-grading.)
+- **Reused:** `facts.py` collectors (become the tool bodies); `validate_citations`,
+  `review_opinions`, `calibrate`; `UserModelStore` + `derivation` column; the engine
+  selection + 503 guard pattern.
+- **Reworked:** `FactDigestBuilder` (static push) → query tools + evidence ledger;
+  `group_facts`/`form_opinions` (static two-stage) → the **ReAct former loop**
+  (`opinion_agent.py`); the route → split into `routes/opinions.py` and driven through the
+  agent.
+- **Retired:** the legacy connector dreamer duplication; the static digest builder; the
+  separate grouping stage (the agent organizes its own investigation).
 
-**Persist.** Reviewer-approved opinions → `user_model_snapshots` with
-`derivation = {method: "opinion-workflow", theme, fact_summaries, event_ids, review}`.
-Append-only; latest-per-trait on read; recency/decay as designed.
+## 6. Testing (TDD)
 
-## 4. Orchestration — hourly + manual
+- **Query tools:** each returns faithful `Fact`s with correct ids/refs; graceful when a
+  source is empty/unconfigured.
+- **ReAct loop:** inject a `CompletionFn` returning a scripted sequence — e.g.
+  `action: query_calendar` → observation → `final: opinions[cite f-ids]`. Assert the right
+  tool ran, the ledger captured the facts, and cited opinions persisted with the chain.
+  Cover: model emits final immediately (no tools); model loops twice; model never finalizes
+  (graceful stop at `max_steps`); model emits garbage (no crash).
+- **Evidence ledger / validator:** citation to a real ledger id survives; to a non-existent
+  id is dropped; confidence capped (already covered, keep).
+- **Reviewer:** drop / lower-only / unreviewed-kept (already covered, keep).
+- **Calendar connector:** seeding the sync uses `[now − sync_days_back, now + sync_days_ahead]`.
+- **Reorg:** `extract_json`/completion fns import from `agent/completion`; assert no import
+  from `user_model.opinion_*` to `dreamer` (and vice-versa); the legacy connector dreamer is
+  gone and nothing imports it.
+- **Route:** `/opinions/refresh` (in `routes/opinions.py`) drives the agent with a scripted
+  provider and persists a cited opinion; engine selection + 503 guard intact.
 
-- **Manual:** `POST /opinions/refresh` re-pointed from the old deterministic
-  `OpinionFormer` to `OpinionWorkflow`.
-- **Scheduled:** an **hourly** cron line in the sidecar — `${OPINIONS_MINUTE} * * * *`
-  → `POST /opinions/refresh` (default minute off `:00`, e.g. `7`). New env
-  `OPINIONS_MINUTE` (+ `OPINIONS_ENABLED`), wired into compose + `.env.example`,
-  mirroring the dreamer's nightly wiring.
-- **Engine:** same brain selection as the dreamer — `engine_dream_fn(agent)`
-  (claude-code) by default, Ollama if `AGENT_ENGINE=ollama`. The two LLM stages are
-  injected fns, so the workflow is engine-agnostic + test-deterministic.
+## 7. Decisions log
 
-## 5. What gets retired / changed
+- The opinion-maker is a **tool-using ReAct agent**, not a static-digest consumer — it
+  **pulls** what it needs.
+- The loop is **engine-agnostic** (text-action protocol over `CompletionFn`) so it runs on
+  the `claude-code` default; native tool-calls are a future optimization.
+- **Grounding is preserved** by a per-run **evidence ledger** + the existing deterministic
+  cite-or-omit validator.
+- **Calendar carries past + future** (connector `sync_days_back` default 90).
+- **Opinions are decoupled from the dreamer:** shared `agent/completion.py`, split routes,
+  legacy connector dreamer retired.
+- The validator/reviewer/persist invariants from the first cut are **unchanged**.
 
-- **Retire** `compute_browser_traits` decisiveness/deliberation (and the
-  `UserModelDeriver` browser-trait path) — superseded by the workflow. Their
-  signals become *facts* in the digest, not pre-computed traits.
-- **v1:** `FactDigestBuilder` collects facts from **browser + calendar + email +
-  explicit memory** (all sources except finance). The existing `CalendarExtractor`
-  (emits `TraitSnapshot`s today) is repurposed into a calendar `Fact` collector;
-  new collectors for email (via `EmailService`) and memory (`MemoryService`).
-  **Finance** facts: Phase 2. The deterministic `OpinionFormer` merge is removed —
-  grouping + forming now happen in the LLM stages.
-- **Dreams unchanged.** `about_me` unchanged (reads snapshots, shows derivation).
-- `user_model_snapshots` + `derivation` column unchanged (already built, migration
-  0018). **No new migration.**
+## 8. Out of scope (Phase 2, unchanged)
 
-## 6. Data flow & confidence
-
-`signals → facts(+event_ids) → themes → opinions(+fact_ids) → validated(+capped
-confidence, event_ids) → snapshots`. Confidence calibration v1:
-`calibrated = min(0.95, 0.5 + 0.15*(n_citations-1) + 0.15*(n_sources-1))` — a single
-cited fact from one source caps at 0.5; corroboration across facts/sources raises it.
-(Exact curve tunable; the point is high confidence must be *earned* by evidence.)
-
-## 7. File-by-file change map
-
-**Backend**
-- `user_model/facts.py` (new) — `Fact` + `FactDigestBuilder` (deterministic;
-  browser facts v1, finance/calendar fast-follow).
-- `user_model/opinion_workflow.py` (new) — `OpinionWorkflow` (group → form →
-  validate → **review** → persist), injected LLM fns (grouping, forming, reviewer);
-  deterministic validator + confidence cap.
-- `user_model/facts.py` — fact collectors for **browser, calendar, email
-  (EmailService), and memory (MemoryService)**; each emits `Fact`s with a source
-  `ref`. The `FactDigestBuilder` composes them (skips a source if its service is
-  unavailable, so it degrades gracefully).
-- `connectors/browser_activity/derive.py` — retire decisiveness/deliberation;
-  repurpose extraction into the browser fact collector (or move to facts.py).
-- `user_model/opinions.py` / `extractors.py` — repurpose to fact collectors or
-  fold into the digest builder; drop trait emission.
-- `api/routes/dreams.py` — `/opinions/refresh` runs `OpinionWorkflow`.
-- `infra/cron/entrypoint.sh`, `infra/docker-compose.yml`, `.env.example`,
-  `config.py` — hourly opinions cron + `OPINIONS_MINUTE`/`OPINIONS_ENABLED`.
-
-## 8. Testing (TDD)
-
-- **FactDigestBuilder:** seed signals → faithful `Fact`s with correct `event_ids`
-  (deterministic).
-- **Fact collectors (per source):** seed signals → faithful `Fact`s with correct
-  `ref`s — browser (event_ids), calendar (event_ids), email (fake EmailService →
-  message ids), memory (fake MemoryService → row ids). Builder skips unavailable
-  sources.
-- **OpinionWorkflow:** injected fake grouping + forming + reviewer fns → opinions
-  flow group → form → validate → review → persist with derivation; assert wiring.
-- **Citation validator:** opinion citing a nonexistent `fact_id` → dropped; opinion
-  with N citations across M sources → confidence capped per the curve; uncited →
-  dropped.
-- **Reviewer agent:** a `keep:false` review drops the opinion; a
-  `confidence_adjustment` lowers it; only reviewer-approved opinions persist.
-- **Retire:** update/remove decisiveness/deliberation tests.
-- The live LLM prompts are verified e2e (manual `/opinions/refresh` against the
-  real engine), not unit-tested.
-
-## 9. Phase 2 (noted, not built)
-
-- **Finance fact collector** (Plaid spend/recurring → `Fact`s).
-- **Retention** prune of old snapshots + recency decay on reads.
-
-## 10. Decisions log
-
-- Opinions are **LLM-formed but strictly fact-bound**: high-confidence, cited,
-  no imagination. Speculation → Dreams.
-- **Cite-or-omit** enforced by a deterministic citation validator, **then an LLM
-  reviewer agent** (v1) that drops opinions overreaching their evidence.
-- Pipeline: **group → form → validate → review → persist**, fed by a deterministic
-  fact digest over **all sources except finance** — browser + calendar + email +
-  explicit memory (finance Phase 2).
-- Runs **hourly** (configurable) + **manually** via `/opinions/refresh`; same engine
-  selection as the dreamer.
-- Deterministic trait heuristics (decisiveness/deliberation) **retired**.
-- Confidence is **capped by evidence strength**, never blindly trusted.
+- Finance fact collector / `query_finance` tool.
+- Snapshot retention/decay.
+- Native tool-call loop for brains that support it.
