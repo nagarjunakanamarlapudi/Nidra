@@ -14,6 +14,7 @@ from pragya_assistant.agent.completion import (
     extract_json,
     ollama_completion_fn,
 )
+from pragya_assistant.agent.hardening import HARDENING_PREAMBLE
 
 
 def test_extract_json_strips_fences_and_salvages() -> None:
@@ -35,8 +36,9 @@ async def test_engine_completion_fn_calls_respond() -> None:
 async def test_ollama_completion_fn_forces_json_and_low_temp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Faithful to the original: /api/chat, forced JSON, temperature 0.3, prompt as
-    the user message; parses message.content."""
+    """Faithful to the original: /api/chat, forced JSON, temperature 0.3, the
+    caller's prompt riding at the end of the (now hardened) user message; parses
+    message.content."""
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -57,6 +59,46 @@ async def test_ollama_completion_fn_forces_json_and_low_temp(
     assert str(captured["url"]).endswith("/api/chat")
     body = captured["body"]
     assert isinstance(body, dict)
-    assert body["format"] == "json"
+    assert body["format"] == "json"  # forced JSON preserved (dream/opinion parsing)
     assert body["options"] == {"temperature": 0.3}
-    assert body["messages"] == [{"role": "user", "content": "PROMPT"}]
+    messages = body["messages"]
+    assert isinstance(messages, list) and len(messages) == 1
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"].endswith("PROMPT")  # caller's prompt is preserved
+
+
+async def test_ollama_completion_fn_scrubs_output_and_hardens_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The raw ollama path does its own harden + scrub (it skips the engine's
+    ``harden``/``guard``): the sent prompt carries the hardening preamble, and a
+    secret the model emits is redacted before it leaves the system — keeping the
+    spec's always-on output scrubbing true under AGENT_ENGINE=ollama."""
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        # The on-device model is coaxed into emitting an AWS key inside its JSON.
+        return httpx.Response(
+            200, json={"message": {"content": '{"leak": "AKIAIOSFODNN7EXAMPLE"}'}}
+        )
+
+    real_client = httpx.AsyncClient
+
+    def fake_client(**kwargs: object) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(completion_mod.httpx, "AsyncClient", fake_client)
+
+    out = await ollama_completion_fn("http://host:11434", "gemma")("PROMPT")
+    # Output is scrubbed: the AWS key never leaves, replaced by [REDACTED].
+    assert "AKIAIOSFODNN7EXAMPLE" not in out
+    assert "[REDACTED]" in out
+    assert json.loads(out) == {"leak": "[REDACTED]"}  # still valid, parseable JSON
+    # The sent prompt is hardened: the security preamble precedes the caller's text.
+    body = captured["body"]
+    assert isinstance(body, dict)
+    sent = body["messages"][0]["content"]
+    assert sent.startswith(HARDENING_PREAMBLE)
+    assert sent.endswith("PROMPT")

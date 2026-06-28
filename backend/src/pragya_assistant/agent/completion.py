@@ -12,6 +12,8 @@ from typing import Any
 import httpx
 
 from pragya_assistant.agent.engine import AgentEngine
+from pragya_assistant.agent.hardening import HARDENING_PREAMBLE
+from pragya_assistant.agent.secret_scrub import scrub_secrets
 
 # A one-shot completion: prompt -> raw model text (often JSON).
 CompletionFn = Callable[[str], Awaitable[str]]
@@ -33,7 +35,20 @@ def ollama_completion_fn(base_url: str, model: str, *, timeout: float = 120.0) -
     Faithful to the original on-device call: ``/api/chat`` with ``format="json"``
     and ``temperature=0.3`` (so output is parseable + stable). Neutral on the system
     prompt — the caller embeds its own instructions in ``prompt`` (no subsystem-
-    specific SYSTEM is baked in here)."""
+    specific SYSTEM is baked in here).
+
+    Unlike the engine paths, this raw HTTP call does not flow through ``harden`` or
+    ``guard``, so it does both itself — keeping the spec's "hardening is on every
+    path" and "output scrubbing is always-on" true even when ``AGENT_ENGINE=ollama``
+    (the dreamer's ``/dreams/run`` and the opinion ``review_fn``):
+
+    * the :data:`HARDENING_PREAMBLE` is prepended to the prompt, so the on-device
+      model is primed to treat ingested content as data and refuse to leak secrets;
+    * the response is run through :func:`scrub_secrets`, so a secret the model is
+      coaxed into emitting is redacted before it leaves the system.
+
+    Scrubbing is safe with forced JSON: ``[REDACTED]`` only ever replaces a secret-
+    shaped substring *inside* a JSON string value, so the result stays parseable."""
 
     async def _call(prompt: str) -> str:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -44,12 +59,14 @@ def ollama_completion_fn(base_url: str, model: str, *, timeout: float = 120.0) -
                     "stream": False,
                     "format": "json",
                     "options": {"temperature": 0.3},
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {"role": "user", "content": f"{HARDENING_PREAMBLE}\n\n{prompt}"}
+                    ],
                 },
             )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
-            return str((data.get("message") or {}).get("content") or "")
+            return scrub_secrets(str((data.get("message") or {}).get("content") or ""))
 
     return _call
 

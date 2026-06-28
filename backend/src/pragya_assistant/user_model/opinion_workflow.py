@@ -11,13 +11,14 @@ reviewer agent drops opinions overreaching their evidence."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from pragya_assistant.agent.completion import CompletionFn, extract_json
 from pragya_assistant.agent.engine import AgentEngine
+from pragya_assistant.agent.secret_scrub import scrub_secrets
 from pragya_assistant.user_model.facts import Fact
 from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
 
@@ -138,6 +139,36 @@ async def review_opinions(snaps: list[TraitSnapshot], fn: CompletionFn) -> list[
     return kept
 
 
+def _scrub_json(obj: Any) -> Any:
+    """Recursively redact secret-shaped substrings from a JSON-like structure."""
+    if isinstance(obj, str):
+        return scrub_secrets(obj)
+    if isinstance(obj, list):
+        return [_scrub_json(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _scrub_json(v) for k, v in obj.items()}
+    return obj
+
+
+def _scrub_snapshot(snap: TraitSnapshot) -> TraitSnapshot:
+    """Redact secret-shaped text from a snapshot before it is persisted.
+
+    ``GuardedEngine`` already scrubs the engine's OUTPUT, so the opinion ``value``
+    arrives clean -- but the evidence chain in ``derivation`` (``fact_summaries``,
+    ``refs``) is assembled by :func:`validate_citations` straight from the raw
+    ledger facts, which never pass through that output guard. A secret smuggled
+    into an ingested fact (an email subject, a page title, a search query) would
+    otherwise ride into the persisted, queryable evidence chain. Re-scrub the
+    snapshot here -- the opinion-model persistence boundary -- so nothing
+    secret-shaped is ever written. Idempotent (re-scrubbing the already-clean
+    value is a no-op)."""
+    return replace(
+        snap,
+        value=_scrub_json(snap.value),
+        derivation=_scrub_json(snap.derivation) if snap.derivation is not None else None,
+    )
+
+
 class OpinionWorkflow:
     """Drives the tool-using opinion agent -> validate -> review -> persist.
 
@@ -170,5 +201,8 @@ class OpinionWorkflow:
         proposed = parse_proposed_opinions(reply)
         validated = validate_citations(proposed, self._ledger.facts)
         reviewed = await review_opinions(validated, self._review_fn)
-        await self._model.write(reviewed)
-        return reviewed
+        # Final scrub at the persistence boundary: the evidence chain is built from
+        # raw ledger facts that bypass the engine's output guard (see _scrub_snapshot).
+        scrubbed = [_scrub_snapshot(s) for s in reviewed]
+        await self._model.write(scrubbed)
+        return scrubbed

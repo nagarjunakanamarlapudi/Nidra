@@ -91,7 +91,6 @@ class Settings(BaseSettings):
     digest_timezone: str = "UTC"
 
     # --- Opinions (hourly fact-grounded opinion workflow) ---
-    opinions_enabled: bool = True
     opinions_minute: int = 7  # minute past every hour (off :00 to avoid the fleet)
 
     # --- Connectors: server-side OAuth client (enables one-click "Connect with

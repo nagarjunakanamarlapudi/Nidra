@@ -259,3 +259,16 @@ async def test_egress_hook_allows_normal_webfetch() -> None:
     )
     # No deny decision -> the call proceeds.
     assert out.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+
+async def test_egress_hook_denies_webfetch_without_url() -> None:
+    # Fail-CLOSED: a WebFetch with no url (or a non-string one) can't be scanned,
+    # so it is denied rather than waved through — an injection can't dodge the
+    # egress scan by omitting / hiding the destination.
+    engine = ClaudeCodeEngine(tools=[_tool()], system_prompt="SYS", query_fn=lambda **k: iter(()))
+    hook = _webfetch_hook(engine)
+    for tool_input in ({}, {"url": None}, {"url": ["https://x.test"]}):
+        out = await hook(
+            {"tool_name": "WebFetch", "tool_input": tool_input}, "tid", {"signal": None}
+        )
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"

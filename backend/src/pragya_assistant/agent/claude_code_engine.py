@@ -184,30 +184,41 @@ class ClaudeCodeEngine:
         return "\n".join(lines)
 
 
+def _egress_deny(reason: str) -> HookJSONOutput:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"egress blocked: {reason}",
+        }
+    }
+
+
 async def _egress_hook(
     input_data: Mapping[str, Any],
     _tool_use_id: str | None,
     _context: HookContext,
 ) -> HookJSONOutput:
-    """PreToolUse hook: deny a WebFetch whose URL fails the egress guard.
+    """PreToolUse hook (matches WebFetch): deny a WebFetch whose URL fails the
+    egress guard, OR that arrives without a usable URL.
 
     Fires before every tool call (unlike ``can_use_tool``, which only runs on
-    "ask"), so an auto-approved WebFetch is still checked. Returns ``{}`` (no
-    decision -> proceed) for everything else, including non-WebFetch calls that
-    happen to reach it and any call without a string ``url``."""
+    "ask"), so an auto-approved WebFetch is still checked. Fail-CLOSED: a WebFetch
+    with a missing or non-string ``url`` is malformed/suspicious (a legitimate
+    fetch always carries a string URL), so it is denied rather than waved through —
+    an injection cannot dodge the egress scan by hiding the destination in a
+    non-string field. A scannable string URL is then run through
+    :func:`egress_allowed` and denied if it carries secret-shaped data or a bulk
+    encoded blob. Only a present, allowed string URL proceeds (returns ``{}``)."""
     tool_input = input_data.get("tool_input") or {}
     url = tool_input.get("url")
-    if isinstance(url, str):
-        allowed, reason = egress_allowed(url)
-        if not allowed:
-            log.warning("egress_blocked", url=url, reason=reason)
-            return {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": f"egress blocked: {reason}",
-                }
-            }
+    if not isinstance(url, str):
+        log.warning("egress_blocked", url=url, reason="missing or non-string url")
+        return _egress_deny("WebFetch without a string url")
+    allowed, reason = egress_allowed(url)
+    if not allowed:
+        log.warning("egress_blocked", url=url, reason=reason)
+        return _egress_deny(reason)
     return {}
 
 

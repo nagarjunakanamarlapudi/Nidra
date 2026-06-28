@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from pragya_assistant.agent.completion import CompletionFn, extract_json
+from pragya_assistant.agent.untrusted import wrap_untrusted
 from pragya_assistant.memory.models import Dream
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import UserModelStore
@@ -32,15 +33,21 @@ SYSTEM = (
 
 
 def build_dream_prompt(opinions: list[Any], record: list[Dream]) -> str:
-    lines = [SYSTEM, "", "OPINIONS (grounded beliefs about the user):"]
+    # SYSTEM is our trusted instruction and stays at the top level. The opinions
+    # and track record are DERIVED from ingested data (a poisoned email subject
+    # could ride into an opinion value, a crafted page title into a past dream
+    # hypothesis), so the whole data body is fenced with wrap_untrusted: the model
+    # reasons over it as DATA, never obeying instructions smuggled inside it.
+    body = ["OPINIONS (grounded beliefs about the user):"]
     op_lines = [f"- {s.trait} = {s.value} (conf {s.confidence})" for s in opinions]
-    lines += op_lines or ["- (none yet)"]
+    body += op_lines or ["- (none yet)"]
     if record:
-        lines += ["", "TRACK RECORD (past dreams + how they turned out — learn from these):"]
+        body += ["", "TRACK RECORD (past dreams + how they turned out — learn from these):"]
         for d in record:
             signal = (d.outcome or {}).get("signal", "")
-            lines.append(f"- [{d.status}/{signal}] {d.hypothesis}")
-    return "\n".join(lines)
+            body.append(f"- [{d.status}/{signal}] {d.hypothesis}")
+    fenced = wrap_untrusted("user model", "\n".join(body))
+    return f"{SYSTEM}\n\n{fenced}"
 
 
 def _to_new_dream(raw: Any) -> NewDream | None:

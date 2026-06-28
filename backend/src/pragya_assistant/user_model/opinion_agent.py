@@ -14,6 +14,7 @@ from typing import Any
 from pragya_assistant.agent.completion import extract_json
 from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.agent.tools import Tool
+from pragya_assistant.agent.untrusted import wrap_untrusted
 from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
 from pragya_assistant.connectors.google_calendar.store import CalendarEventStore
 from pragya_assistant.user_model.facts import (
@@ -46,9 +47,18 @@ class EvidenceLedger:
 
 
 def _observe(facts: list[Fact]) -> str:
+    """Render the facts a query tool returned as the model-facing observation.
+
+    The fact lines are ingested activity (browser/calendar/email/memory) the
+    system does not control, so they are fenced with :func:`wrap_untrusted`: the
+    model is told, in-band, to treat the enclosed text as DATA to reason about and
+    cite -- never as instructions. A "ignore all previous instructions" smuggled
+    into a page title or email subject thus lands strictly inside the block and
+    reads as quoted data. The fact ids (f1..fn) stay visible for citation."""
     if not facts:
         return "(no matching facts)"
-    return "\n".join(f"- {f.id} [{f.source}/{f.kind}]: {f.summary}" for f in facts)
+    lines = "\n".join(f"- {f.id} [{f.source}/{f.kind}]: {f.summary}" for f in facts)
+    return wrap_untrusted("activity", lines)
 
 
 def build_query_tools(
