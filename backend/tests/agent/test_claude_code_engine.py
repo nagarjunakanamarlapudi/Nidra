@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterable
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -27,11 +28,30 @@ def _assistant(text: str) -> SimpleNamespace:
     return SimpleNamespace(content=[SimpleNamespace(text=text)])
 
 
+async def _collect_user_text(prompt: AsyncIterable[dict[str, Any]]) -> str:
+    """Consume the streaming prompt the engine passes and return its user text.
+
+    ``respond`` must run in streaming mode (an ``AsyncIterable[dict]``, not a
+    string) because ``can_use_tool`` + the PreToolUse hook require it. The engine
+    yields exactly one user message in the SDK's required shape; draining it here
+    both verifies that shape and avoids leaving an unconsumed async generator
+    (the suite runs with ``filterwarnings = ["error"]``)."""
+    messages = [m async for m in prompt]
+    assert len(messages) == 1, messages
+    msg = messages[0]
+    assert msg["type"] == "user"
+    assert msg["message"]["role"] == "user"
+    assert msg["parent_tool_use_id"] is None
+    content = msg["message"]["content"]
+    assert isinstance(content, str)
+    return content
+
+
 async def test_returns_text_and_passes_options() -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any) -> Any:
-        captured["prompt"] = prompt
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        captured["prompt"] = await _collect_user_text(prompt)
         captured["options"] = options
         yield _assistant("Hi from Claude Code")
 
@@ -55,8 +75,8 @@ async def test_returns_text_and_passes_options() -> None:
 async def test_includes_history_in_prompt() -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any) -> Any:
-        captured["prompt"] = prompt
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        captured["prompt"] = await _collect_user_text(prompt)
         yield _assistant("ok")
 
     engine = ClaudeCodeEngine(tools=[_tool()], system_prompt="SYS", query_fn=fake_query)
@@ -71,7 +91,8 @@ async def test_includes_history_in_prompt() -> None:
 
 
 async def test_concatenates_assistant_texts() -> None:
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         yield _assistant("part1")
         yield _assistant("part2")
 
@@ -81,7 +102,8 @@ async def test_concatenates_assistant_texts() -> None:
 
 
 async def test_raises_when_no_text() -> None:
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         yield SimpleNamespace(content=[])
 
     engine = ClaudeCodeEngine(tools=[_tool()], system_prompt="SYS", query_fn=fake_query)
@@ -90,7 +112,8 @@ async def test_raises_when_no_text() -> None:
 
 
 async def test_logs_usage() -> None:
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         yield SimpleNamespace(content=[SimpleNamespace(text="hi")], usage={"input_tokens": 7})
 
     engine = ClaudeCodeEngine(tools=[_tool()], system_prompt="SYS", query_fn=fake_query)
@@ -104,7 +127,8 @@ async def test_logs_usage() -> None:
 async def test_passes_effort_to_options() -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         captured["options"] = options
         yield SimpleNamespace(content=[SimpleNamespace(text="ok")])
 
@@ -116,7 +140,8 @@ async def test_passes_effort_to_options() -> None:
 async def test_builtin_tools_added_to_allowed() -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         captured["options"] = options
         yield _assistant("ok")
 
@@ -135,7 +160,8 @@ async def test_builtin_tools_added_to_allowed() -> None:
 async def test_no_builtin_tools_by_default() -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         captured["options"] = options
         yield _assistant("ok")
 
@@ -147,7 +173,8 @@ async def test_no_builtin_tools_by_default() -> None:
 async def test_options_confine_filesystem_and_bash() -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_query(*, prompt: str, options: Any) -> Any:
+    async def fake_query(*, prompt: AsyncIterable[dict[str, Any]], options: Any) -> Any:
+        await _collect_user_text(prompt)
         captured["opts"] = options
         yield _assistant("ok")
 

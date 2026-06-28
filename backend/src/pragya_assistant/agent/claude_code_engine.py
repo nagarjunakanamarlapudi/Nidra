@@ -26,6 +26,12 @@ data or a bulk encoded blob (data exfiltration). A hook -- not ``can_use_tool``
 WebFetch would bypass it, whereas a ``PreToolUse`` hook fires before *every*
 tool call.
 
+Both ``can_use_tool`` and the egress hook are SDK *control-protocol* features,
+which the SDK runs only in streaming mode; :meth:`ClaudeCodeEngine.respond`
+therefore sends the prompt as a one-message ``AsyncIterable[dict]`` (not a
+string), or the SDK would raise ``"can_use_tool callback requires streaming
+mode"`` and the hook would never fire (both are control requests).
+
 ``setting_sources=[]`` keeps behaviour driven by our own system prompt, not the
 host's Claude config. The query function is injectable so tests need no real
 Claude Code or auth.
@@ -99,11 +105,27 @@ class ClaudeCodeEngine:
     async def respond(
         self, history: list[Message], user_text: str, *, effort: Effort | None = None
     ) -> tuple[str, list[Message]]:
+        rendered = self._render_prompt(history, user_text)
+
+        async def _stream() -> AsyncIterator[dict[str, Any]]:
+            # Streaming-mode input. ``can_use_tool`` and the ``PreToolUse`` egress
+            # hook are control-protocol features the SDK refuses to run with a
+            # string prompt — it raises "can_use_tool callback requires streaming
+            # mode" (claude_agent_sdk/_internal/client.py) and "Control requests
+            # require streaming mode" for hooks (.../query.py). Yielding the prompt
+            # as an ``AsyncIterable[dict]`` selects streaming mode so both work.
+            # The message shape mirrors the dict the SDK itself sends for a string
+            # prompt (client.py: type / session_id / message / parent_tool_use_id).
+            yield {
+                "type": "user",
+                "session_id": "",
+                "message": {"role": "user", "content": rendered},
+                "parent_tool_use_id": None,
+            }
+
         texts: list[str] = []
         usage: Any = None
-        async for message in self._query(
-            prompt=self._render_prompt(history, user_text), options=self._options(effort)
-        ):
+        async for message in self._query(prompt=_stream(), options=self._options(effort)):
             content = getattr(message, "content", None)
             if isinstance(content, list):
                 for block in content:

@@ -13,7 +13,6 @@ from pragya_assistant.connectors.browser_activity.store import (
     BrowserActivityEventStore,
     IngestedEvent,
 )
-from pragya_assistant.llm.types import ChatResult
 from pragya_assistant.memory.db import create_session_factory
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import UserModelStore
@@ -22,10 +21,6 @@ from tests.fakes import ScriptedChatProvider
 
 AUTH = {"Authorization": "Bearer token"}
 KEY = "browser_activity"
-
-
-def _stop(text: str) -> ChatResult:
-    return ChatResult(text=text, tool_calls=(), finish_reason="stop", usage={})
 
 
 async def test_dreams_requires_token(build_test_app: AppBuilder) -> None:
@@ -37,9 +32,14 @@ async def test_dreams_requires_token(build_test_app: AppBuilder) -> None:
 
 
 async def test_opinions_refresh_runs_workflow(
-    engine: AsyncEngine, build_test_app: AppBuilder
+    engine: AsyncEngine, build_test_app: AppBuilder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Refresh forms a fact-grounded, cited opinion (the 3 LLM stages are scripted)."""
+    """Refresh forms a fact-grounded, cited opinion. The route runs the workflow on
+    a CONFINED completion (``build_confined_completion_fn``) — never the web-enabled
+    chat agent — so the 3 LLM stages (group -> form -> review) are scripted on that
+    confined fn (called 3x in order), and the chat provider must stay untouched."""
+    from pragya_assistant.api.routes import dreams as dreams_route
+
     sf = create_session_factory(engine)
     await BrowserActivityEventStore(sf).add_events(
         KEY,
@@ -58,7 +58,18 @@ async def test_opinions_refresh_runs_workflow(
         '"confidence": 0.9, "evidence_fact_ids": ["f1"]}]}'
     )
     review = '{"reviews": [{"trait": "intent:travel", "keep": true, "confidence_adjustment": 0}]}'
-    app = build_test_app(ScriptedChatProvider([_stop(group), _stop(form), _stop(review)]))
+    scripted = iter([group, form, review])
+
+    def fake_confined(_settings: object) -> object:
+        async def _complete(_prompt: str) -> str:
+            return next(scripted)
+
+        return _complete
+
+    monkeypatch.setattr(dreams_route, "build_confined_completion_fn", fake_confined)
+
+    provider = ScriptedChatProvider([])  # the web-enabled chat engine must NOT run
+    app = build_test_app(provider)
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         resp = await c.post("/opinions/refresh", headers=AUTH)
     assert resp.status_code == 200 and resp.json()["traits"] == 1
@@ -66,6 +77,7 @@ async def test_opinions_refresh_runs_workflow(
     current = {s.trait: s for s in await UserModelStore(sf).current_model()}
     assert "intent:travel" in current
     assert current["intent:travel"].derivation["event_ids"] == [1]
+    assert provider.calls == []  # the confined completion ran the workflow, not chat
 
 
 async def test_dreams_run_uses_confined_engine_not_chat(

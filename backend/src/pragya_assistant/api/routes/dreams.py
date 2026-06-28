@@ -15,11 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from pragya_assistant.agent.completion import engine_completion_fn, ollama_completion_fn
-from pragya_assistant.agent.engine import AgentEngine
+from pragya_assistant.agent.completion import ollama_completion_fn
 from pragya_assistant.agent.factory import build_confined_completion_fn
 from pragya_assistant.api.auth import require_token
-from pragya_assistant.api.deps import get_agent, get_session_factory, get_settings_dep
+from pragya_assistant.api.deps import get_session_factory, get_settings_dep
 from pragya_assistant.config import Settings
 from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
 from pragya_assistant.connectors.google_calendar.store import CalendarEventStore
@@ -36,7 +35,6 @@ router = APIRouter(tags=["dreams"], dependencies=[Depends(require_token)])
 
 SessionFactory = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
 AppSettings = Annotated[Settings, Depends(get_settings_dep)]
-Agent = Annotated[AgentEngine, Depends(get_agent)]
 
 
 class OutcomeIn(BaseModel):
@@ -80,11 +78,13 @@ async def record_outcome(
 
 @router.post("/opinions/refresh")
 async def refresh_opinions(
-    settings: AppSettings, session_factory: SessionFactory, agent: Agent
+    settings: AppSettings, session_factory: SessionFactory
 ) -> dict[str, Any]:
     """Form fact-grounded opinions via the workflow (digest -> group -> form ->
     validate -> review -> persist). Browser+calendar+email+memory; finance is
-    Phase 2. Same engine selection as the dreamer. Manual + hourly via cron."""
+    Phase 2. Runs on a CONFINED engine (no web/file/bash, output-scrubbed) — never
+    the web-enabled chat engine — so the untrusted ingested facts can't drive tool
+    use or exfiltrate. Manual + hourly via cron."""
     now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
     facts = await FactDigestBuilder(
         browser=BrowserActivityEventStore(session_factory),
@@ -97,7 +97,7 @@ async def refresh_opinions(
     if settings.agent_engine == "ollama":
         fn = ollama_completion_fn(settings.ollama_base_url, settings.dream_model)
     else:
-        fn = engine_completion_fn(agent)
+        fn = build_confined_completion_fn(settings)
     model = UserModelStore(session_factory)
     workflow = OpinionWorkflow(model, group_fn=fn, form_fn=fn, review_fn=fn)
     try:
