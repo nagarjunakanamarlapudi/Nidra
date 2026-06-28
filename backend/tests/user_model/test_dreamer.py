@@ -7,7 +7,7 @@ import datetime as dt
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from pragya_assistant.user_model.dreamer import DreamerService
+from pragya_assistant.user_model.dreamer import DreamerService, engine_dream_fn
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
 
@@ -36,6 +36,23 @@ async def test_dreamer_writes_dreams_and_not_opinions(
     # the dreamer must NOT have touched opinions
     model = await opinions.current_model()
     assert {s.trait for s in model} == {"preference:payment"}
+
+
+async def test_engine_dream_fn_uses_the_agent_engine() -> None:
+    """The dreamer can run on the configured agent brain (e.g. claude-code)."""
+
+    class FakeEngine:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def respond(self, history, user_text, *, effort=None):  # type: ignore[no-untyped-def]
+            self.prompts.append(user_text)
+            return CANNED, []
+
+    engine = FakeEngine()
+    out = await engine_dream_fn(engine)("dream on this")
+    assert "Japan trip" in out
+    assert engine.prompts == ["dream on this"]
 
 
 async def test_dreamer_tolerates_insight_alias(

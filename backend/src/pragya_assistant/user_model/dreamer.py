@@ -13,12 +13,26 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.memory.models import Dream
 from pragya_assistant.user_model.dreams import DreamStore, NewDream
 from pragya_assistant.user_model.store import UserModelStore
 
 # A completion callable: (prompt) -> raw model text (expected JSON).
 DreamFn = Callable[[str], Awaitable[str]]
+
+
+def engine_dream_fn(engine: AgentEngine) -> DreamFn:
+    """Back the dreamer with the configured agent brain (claude-code / codex /
+    api / ollama) — a one-shot completion, no history. The dream prompt is
+    self-contained (instruction + opinions + track record), so the engine just
+    returns the JSON."""
+
+    async def _call(prompt: str) -> str:
+        reply, _ = await engine.respond([], prompt)
+        return reply
+
+    return _call
 
 _KINDS = {"foresight", "suggestion", "need"}
 

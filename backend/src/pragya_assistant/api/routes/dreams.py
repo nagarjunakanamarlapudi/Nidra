@@ -14,12 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from pragya_assistant.agent.engine import AgentEngine
 from pragya_assistant.api.auth import require_token
-from pragya_assistant.api.deps import get_session_factory, get_settings_dep
+from pragya_assistant.api.deps import get_agent, get_session_factory, get_settings_dep
 from pragya_assistant.config import Settings
 from pragya_assistant.connectors.browser_activity.dreamer import ollama_dream_fn
 from pragya_assistant.connectors.browser_activity.store import BrowserActivityEventStore
-from pragya_assistant.user_model.dreamer import DreamerService
+from pragya_assistant.user_model.dreamer import DreamerService, engine_dream_fn
 from pragya_assistant.user_model.dreams import DreamStore
 from pragya_assistant.user_model.extractors import BrowserExtractor
 from pragya_assistant.user_model.feedback import DreamFeedbackService
@@ -30,6 +31,7 @@ router = APIRouter(tags=["dreams"], dependencies=[Depends(require_token)])
 
 SessionFactory = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
 AppSettings = Annotated[Settings, Depends(get_settings_dep)]
+Agent = Annotated[AgentEngine, Depends(get_agent)]
 
 
 class OutcomeIn(BaseModel):
@@ -82,23 +84,27 @@ async def refresh_opinions(session_factory: SessionFactory) -> dict[str, Any]:
 
 
 @router.post("/dreams/run")
-async def run_dreams(settings: AppSettings, session_factory: SessionFactory) -> dict[str, Any]:
-    """Dream on top of the current Opinions (on-device LLM) and write the dreams
-    store. Invoked manually and nightly by the cron sidecar."""
+async def run_dreams(
+    settings: AppSettings, session_factory: SessionFactory, agent: Agent
+) -> dict[str, Any]:
+    """Dream on top of the current Opinions and write the dreams store. Uses the
+    configured agent brain (claude-code by default); falls back to on-device
+    Ollama only when AGENT_ENGINE=ollama. Invoked manually and nightly by cron."""
     model = UserModelStore(session_factory)
     dreams = DreamStore(session_factory)
-    dreamer = DreamerService(
-        model,
-        dreams,
-        ollama_dream_fn(settings.ollama_base_url, settings.dream_model),
-        engine_label=f"ollama:{settings.dream_model}",
-    )
+    if settings.agent_engine == "ollama":
+        complete = ollama_dream_fn(settings.ollama_base_url, settings.dream_model)
+        engine_label = f"ollama:{settings.dream_model}"
+    else:
+        complete = engine_dream_fn(agent)
+        engine_label = settings.agent_engine
+    dreamer = DreamerService(model, dreams, complete, engine_label=engine_label)
     try:
         created = await dreamer.dream()
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Dreamer (Ollama) unavailable: {exc}",
+            detail=f"Dreamer unavailable: {exc}",
         ) from exc
     return {
         "ok": True,
