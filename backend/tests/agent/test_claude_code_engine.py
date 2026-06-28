@@ -3,6 +3,11 @@ from typing import Any
 
 import pytest
 import structlog
+from claude_agent_sdk import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 
 from pragya_assistant.agent.claude_code_engine import ClaudeCodeEngine
 from pragya_assistant.agent.tools import Tool
@@ -108,7 +113,7 @@ async def test_passes_effort_to_options() -> None:
     assert captured["options"].effort == "high"
 
 
-async def test_native_tools_added_to_allowed() -> None:
+async def test_builtin_tools_added_to_allowed() -> None:
     captured: dict[str, Any] = {}
 
     async def fake_query(*, prompt: str, options: Any) -> Any:
@@ -118,7 +123,7 @@ async def test_native_tools_added_to_allowed() -> None:
     engine = ClaudeCodeEngine(
         tools=[_tool()],
         system_prompt="SYS",
-        native_tools=("WebSearch", "WebFetch"),
+        builtin_tools=("WebSearch", "WebFetch"),
         query_fn=fake_query,
     )
     await engine.respond([], "hi")
@@ -127,7 +132,7 @@ async def test_native_tools_added_to_allowed() -> None:
     assert "mcp__pragya__remember_note" in allowed  # memory tools still present
 
 
-async def test_no_native_tools_by_default() -> None:
+async def test_no_builtin_tools_by_default() -> None:
     captured: dict[str, Any] = {}
 
     async def fake_query(*, prompt: str, options: Any) -> Any:
@@ -137,3 +142,42 @@ async def test_no_native_tools_by_default() -> None:
     engine = ClaudeCodeEngine(tools=[_tool()], system_prompt="SYS", query_fn=fake_query)
     await engine.respond([], "hi")
     assert "WebSearch" not in captured["options"].allowed_tools
+
+
+async def test_options_confine_filesystem_and_bash() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_query(*, prompt: str, options: Any) -> Any:
+        captured["opts"] = options
+        yield _assistant("ok")
+
+    engine = ClaudeCodeEngine(tools=[_tool()], system_prompt="SYS", query_fn=fake_query)
+    await engine.respond([], "hi")
+    o = captured["opts"]
+    assert o.tools == []  # no built-in Read/Bash/Write available
+    assert "Read" in o.disallowed_tools and "Bash" in o.disallowed_tools
+    assert o.permission_mode == "dontAsk"  # deny-if-not-pre-approved, NOT bypassPermissions
+    assert o.can_use_tool is not None
+
+
+async def test_can_use_tool_denies_unlisted_and_allows_ours() -> None:
+    engine = ClaudeCodeEngine(
+        tools=[_tool()], system_prompt="SYS", query_fn=lambda **k: iter(())
+    )
+    guard = engine._options().can_use_tool
+    assert guard is not None
+    ctx = ToolPermissionContext()
+    deny = await guard("Bash", {"command": "cat ~/.zshrc"}, ctx)
+    assert isinstance(deny, PermissionResultDeny)
+    allow = await guard("mcp__pragya__remember_note", {}, ctx)
+    assert isinstance(allow, PermissionResultAllow)
+
+
+async def test_chat_may_keep_web_builtins() -> None:
+    engine = ClaudeCodeEngine(
+        tools=[_tool()],
+        system_prompt="SYS",
+        builtin_tools=("WebSearch", "WebFetch"),
+        query_fn=lambda **k: iter(()),
+    )
+    assert engine._options().tools == ["WebSearch", "WebFetch"]

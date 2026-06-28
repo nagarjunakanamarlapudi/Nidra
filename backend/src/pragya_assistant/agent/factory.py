@@ -66,7 +66,7 @@ def build_engine(
     calendar_service: CalendarService | None = None,
     email_service: EmailService | None = None,
     connector_tools: list[Tool] | None = None,
-    native_tools: tuple[str, ...] = (),
+    builtin_tools: tuple[str, ...] = (),
     session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> AgentEngine:
     # Finance tools are intentionally NOT wired here: for in-process engines they
@@ -97,10 +97,16 @@ def build_engine(
             bypass_sandbox=True,
         )
     if engine == "claude-code":
+        # ``builtin_tools`` are the SDK built-ins this engine may use (e.g.
+        # ``WebSearch``/``WebFetch``). They are NOT hardcoded here: like finance
+        # tools via Plaid, web built-ins arrive through the web_search connector
+        # (seeded from ``settings.web_search_enabled``) and are threaded in by the
+        # connector manager. Background-job builders pass nothing → () → no
+        # built-ins, so only chat keeps web. Everything else stays confined.
         return ClaudeCodeEngine(
             tools=tools,
             system_prompt=build_system_prompt(),
             model=settings.claude_code_model,
-            native_tools=native_tools,
+            builtin_tools=builtin_tools,
         )
     raise ValueError(f"Unknown agent engine: {engine!r}")

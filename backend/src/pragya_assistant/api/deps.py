@@ -116,7 +116,9 @@ def build_components(settings: Settings) -> AppComponents:
     )
     instance_store = ConnectorInstanceStore(session_factory, settings.app_secret_key)
 
-    def _rebuild_engine(connector_tools: list[Tool], native_tools: tuple[str, ...]) -> AgentEngine:
+    def _rebuild_engine(
+        connector_tools: list[Tool], builtin_tools: tuple[str, ...]
+    ) -> AgentEngine:
         return build_engine(
             settings,
             memory,
@@ -124,7 +126,7 @@ def build_components(settings: Settings) -> AppComponents:
             calendar_service,
             email_service,
             connector_tools=connector_tools,
-            native_tools=native_tools,
+            builtin_tools=builtin_tools,
             session_factory=session_factory,
         )
 
