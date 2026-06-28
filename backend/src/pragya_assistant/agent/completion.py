@@ -28,20 +28,28 @@ def engine_completion_fn(engine: AgentEngine) -> CompletionFn:
 
 
 def ollama_completion_fn(base_url: str, model: str, *, timeout: float = 120.0) -> CompletionFn:
-    """Back a completion with a local Ollama model (no tools, JSON expected).
+    """Back a completion with a local Ollama model — forced JSON, low temperature.
 
-    Uses /api/generate — the prompt is self-contained (callers embed system
-    instructions in the prompt string; the connector-specific SYSTEM in the legacy
-    browser-activity dreamer is prepended by DreamerService before calling this)."""
+    Faithful to the original on-device call: ``/api/chat`` with ``format="json"``
+    and ``temperature=0.3`` (so output is parseable + stable). Neutral on the system
+    prompt — the caller embeds its own instructions in ``prompt`` (no subsystem-
+    specific SYSTEM is baked in here)."""
 
     async def _call(prompt: str) -> str:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                f"{base_url.rstrip('/')}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False},
+                f"{base_url.rstrip('/')}/api/chat",
+                json={
+                    "model": model,
+                    "stream": False,
+                    "format": "json",
+                    "options": {"temperature": 0.3},
+                    "messages": [{"role": "user", "content": prompt}],
+                },
             )
             resp.raise_for_status()
-            return str(resp.json().get("response", ""))
+            data: dict[str, Any] = resp.json()
+            return str((data.get("message") or {}).get("content") or "")
 
     return _call
 
