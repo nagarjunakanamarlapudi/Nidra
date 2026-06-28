@@ -15,7 +15,7 @@ from typing import Any
 
 from pragya_assistant.user_model.dreamer import extract_json
 from pragya_assistant.user_model.facts import Fact
-from pragya_assistant.user_model.store import TraitSnapshot
+from pragya_assistant.user_model.store import TraitSnapshot, UserModelStore
 
 LlmFn = Callable[[str], Awaitable[str]]
 
@@ -137,3 +137,82 @@ def validate_citations(opinions: list[ProposedOpinion], facts: list[Fact]) -> li
             )
         )
     return snaps
+
+
+# ---------------------------------------------------------------------------
+# Task 5: reviewer agent + OpinionWorkflow.run
+# ---------------------------------------------------------------------------
+
+REVIEW_SYSTEM = (
+    "You are Nidra's opinion reviewer — a skeptical second pass. For each opinion, "
+    "decide whether the cited evidence ACTUALLY supports the claim. Drop opinions "
+    "that overreach the evidence (keep=false); lower confidence when support is thin "
+    "(confidence_adjustment in [-1.0, 0.0]). Keep only well-supported opinions. "
+    'Respond with ONLY JSON: {"reviews": [{"trait": "...", "keep": true, '
+    '"confidence_adjustment": 0.0, "reason": "..."}]}'
+)
+
+
+def build_review_prompt(snaps: list[TraitSnapshot]) -> str:
+    lines = [REVIEW_SYSTEM, "", "OPINIONS (with their cited facts):"]
+    for s in snaps:
+        facts = "; ".join((s.derivation or {}).get("fact_summaries", []))
+        lines.append(f"- {s.trait} = {s.value} (conf {s.confidence}) | evidence: {facts}")
+    return "\n".join(lines)
+
+
+async def review_opinions(snaps: list[TraitSnapshot], fn: LlmFn) -> list[TraitSnapshot]:
+    if not snaps:
+        return []
+    parsed = extract_json(await fn(build_review_prompt(snaps)))
+    reviews = parsed.get("reviews", []) if isinstance(parsed, dict) else []
+    by_trait: dict[str, dict[str, Any]] = {
+        str(r.get("trait")): r for r in reviews if isinstance(r, dict) and r.get("trait")
+    }
+    kept: list[TraitSnapshot] = []
+    for s in snaps:
+        r = by_trait.get(s.trait)
+        if r is None:
+            kept.append(s)  # unreviewed -> keep as-is (validator already grounded it)
+            continue
+        if r.get("keep") is False:
+            continue
+        try:
+            adj = max(-1.0, min(0.0, float(r.get("confidence_adjustment", 0.0))))
+        except (TypeError, ValueError):
+            adj = 0.0
+        derivation = dict(s.derivation or {})
+        derivation["review"] = {"reason": str(r.get("reason") or "")}
+        kept.append(
+            TraitSnapshot(
+                trait=s.trait,
+                value=s.value,
+                confidence=round(max(0.0, s.confidence + adj), 2),
+                evidence=s.evidence,
+                provenance=s.provenance,
+                derivation=derivation,
+            )
+        )
+    return kept
+
+
+class OpinionWorkflow:
+    """group -> form -> validate -> review -> persist. LLM stages are injected."""
+
+    def __init__(
+        self, model: UserModelStore, *, group_fn: LlmFn, form_fn: LlmFn, review_fn: LlmFn
+    ) -> None:
+        self._model = model
+        self._group_fn = group_fn
+        self._form_fn = form_fn
+        self._review_fn = review_fn
+
+    async def run(self, facts: list[Fact]) -> list[TraitSnapshot]:
+        if not facts:
+            return []
+        themes = await group_facts(facts, self._group_fn)
+        proposed = await form_opinions(themes, facts, self._form_fn)
+        validated = validate_citations(proposed, facts)
+        reviewed = await review_opinions(validated, self._review_fn)
+        await self._model.write(reviewed)
+        return reviewed
