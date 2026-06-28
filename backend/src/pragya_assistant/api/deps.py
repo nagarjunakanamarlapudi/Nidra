@@ -75,7 +75,10 @@ def build_components(settings: Settings) -> AppComponents:
     )
     email_service = build_email_service(settings)
     finance = build_finance_service(settings, session_factory)
-    agent = build_engine(settings, memory, task_store, calendar_service, email_service)
+    agent = build_engine(
+        settings, memory, task_store, calendar_service, email_service,
+        session_factory=session_factory,
+    )
     telegram = TelegramClient(settings.telegram_bot_token) if settings.telegram_bot_token else None
     digests = DigestService(
         engine=agent,
@@ -122,6 +125,7 @@ def build_components(settings: Settings) -> AppComponents:
             email_service,
             connector_tools=connector_tools,
             native_tools=native_tools,
+            session_factory=session_factory,
         )
 
     def _apply_engine(new_engine: AgentEngine) -> None:

@@ -7,6 +7,9 @@ same tools (§10).
 
 from __future__ import annotations
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from pragya_assistant.agent.activity_tools import build_activity_tools
 from pragya_assistant.agent.memory_tools import build_memory_tools
 from pragya_assistant.agent.tools import Tool
 from pragya_assistant.calendars.service import CalendarService
@@ -27,8 +30,12 @@ def build_agent_tools(
     email_service: EmailService | None = None,
     finance_service: FinanceService | None = None,
     connector_tools: list[Tool] | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> list[Tool]:
     tools = build_memory_tools(memory)
+    if session_factory is not None:
+        # Browser-activity + user-model (Opinions/Dreams) read tools.
+        tools += build_activity_tools(session_factory)
     if task_store is not None:
         tools += build_task_tools(task_store)
     if calendar_service is not None:

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from pragya_assistant.agent.claude_code_engine import ClaudeCodeEngine
 from pragya_assistant.agent.codex_engine import CodexEngine
 from pragya_assistant.agent.core import LoopEngine
@@ -65,6 +67,7 @@ def build_engine(
     email_service: EmailService | None = None,
     connector_tools: list[Tool] | None = None,
     native_tools: tuple[str, ...] = (),
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> AgentEngine:
     # Finance tools are intentionally NOT wired here: for in-process engines they
     # arrive via the Plaid connector (so they're owned by the marketplace). The
@@ -76,6 +79,7 @@ def build_engine(
         calendar_service,
         email_service,
         connector_tools=connector_tools,
+        session_factory=session_factory,
     )
     if engine in _LOOP_PROVIDERS:
         provider = build_chat_provider(settings, _LOOP_PROVIDERS[engine])
