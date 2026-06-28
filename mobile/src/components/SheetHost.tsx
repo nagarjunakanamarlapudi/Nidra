@@ -3,31 +3,27 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { RiseSheet } from './RiseSheet';
 import { useSheets } from './SheetContext';
+import { useHomeData } from './HomeData';
 import { WorldSheet } from '../sheets/WorldSheet';
 import { TalkSheet } from '../sheets/TalkSheet';
-import { details } from '../data/mock';
 
 // Renders the active sheet stack over Home. Each sheet rises + is drag-dismissable;
-// the one beneath scales back for depth. Everything is data-driven off `details`,
-// except Talk (the chat surface), which has its own composer-shaped layout.
-function labelFor(id: string): string {
-  if (id === 'talk') return 'Nidra';
-  return details[id]?.label ?? '';
-}
-
-function heightFor(id: string): number {
-  return details[id]?.heightPct ?? 0.92;
-}
-
-function content(id: string) {
-  if (id === 'talk') return <TalkSheet />;
-  const d = details[id];
-  return d ? <WorldSheet detail={d} /> : null;
-}
-
+// the one beneath scales back for depth. World sheets are data-driven off the live
+// `details` (from the repository seam); Talk is the chat surface.
 export function SheetHost() {
   const { stack, close } = useSheets();
+  const { data } = useHomeData();
+  const details = data.details;
   if (stack.length === 0) return null;
+
+  const labelFor = (id: string): string => (id === 'talk' ? 'Nidra' : details[id]?.label ?? '');
+  const heightFor = (id: string): number => details[id]?.heightPct ?? 0.92;
+  const content = (id: string) => {
+    if (id === 'talk') return <TalkSheet />;
+    const d = details[id];
+    return d ? <WorldSheet detail={d} /> : null;
+  };
+
   return (
     <View style={StyleSheet.absoluteFill}>
       <Pressable style={StyleSheet.absoluteFill} onPress={close}>

@@ -13,6 +13,7 @@ import {
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import { SheetStateProvider } from './src/components/SheetContext';
 import { SheetHost } from './src/components/SheetHost';
+import { HomeDataProvider } from './src/components/HomeData';
 import Home from './src/screens/Home';
 
 export default function App() {
@@ -32,10 +33,12 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <SheetStateProvider>
-          <Home />
-          <SheetHost />
-        </SheetStateProvider>
+        <HomeDataProvider>
+          <SheetStateProvider>
+            <Home />
+            <SheetHost />
+          </SheetStateProvider>
+        </HomeDataProvider>
         <StatusBar style="light" />
       </SafeAreaProvider>
     </GestureHandlerRootView>
