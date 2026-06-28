@@ -38,6 +38,24 @@ async def test_dreamer_writes_dreams_and_not_opinions(
     assert {s.trait for s in model} == {"preference:payment"}
 
 
+async def test_dreamer_tolerates_insight_alias(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """gemma sometimes returns the connectedInsights/insight shape — accept it."""
+    opinions = UserModelStore(session_factory)
+    dreams = DreamStore(session_factory)
+    aliased = (
+        '{"connectedInsights": [{"insight": "Planning a trip to Japan", '
+        '"confidence": 0.8, "fromSignals": ["browser", "calendar"]}]}'
+    )
+
+    async def fake(_prompt: str) -> str:
+        return aliased
+
+    created = await DreamerService(opinions, dreams, fake).dream()
+    assert any("Planning a trip to Japan" in d.hypothesis for d in created)
+
+
 async def test_dreamer_feeds_track_record_into_prompt(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

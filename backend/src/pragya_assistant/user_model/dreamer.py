@@ -64,8 +64,11 @@ def build_dream_prompt(opinions: list[Any], record: list[Dream]) -> str:
     return "\n".join(lines)
 
 
-def _to_new_dream(raw: dict[str, Any]) -> NewDream | None:
-    hypothesis = str(raw.get("hypothesis") or "").strip()
+def _to_new_dream(raw: Any) -> NewDream | None:
+    if not isinstance(raw, dict):
+        return None
+    # Tolerate the connectedInsights/insight shape gemma sometimes returns.
+    hypothesis = str(raw.get("hypothesis") or raw.get("insight") or "").strip()
     if not hypothesis:
         return None
     kind_raw = raw.get("kind")
@@ -74,7 +77,7 @@ def _to_new_dream(raw: dict[str, Any]) -> NewDream | None:
         confidence = max(0.0, min(1.0, float(raw.get("confidence", 0.0))))
     except (TypeError, ValueError):
         confidence = 0.0
-    prov_raw = raw.get("provenance")
+    prov_raw = raw.get("provenance") or raw.get("fromSignals")
     prov = [str(p) for p in prov_raw if p] if isinstance(prov_raw, list) else []
     return NewDream(hypothesis=hypothesis, kind=kind, confidence=confidence, provenance=prov)
 
@@ -97,6 +100,13 @@ class DreamerService:
         model = await self._opinions.current_model()
         record = await self._dreams.track_record(limit=track_limit)
         raw = await self._complete(build_dream_prompt(model, record))
-        proposed = [nd for r in extract_json(raw).get("dreams", []) if (nd := _to_new_dream(r))]
+        parsed = extract_json(raw)
+        items = (
+            parsed.get("dreams")
+            or parsed.get("connectedInsights")
+            or parsed.get("insights")
+            or []
+        )
+        proposed = [nd for r in items if (nd := _to_new_dream(r))]
         await self._dreams.add(proposed)
         return await self._dreams.active()
