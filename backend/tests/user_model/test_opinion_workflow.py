@@ -87,6 +87,7 @@ def test_validate_drops_uncited_and_unresolvable() -> None:
     snaps = validate_citations(ops, facts)
     assert [s.trait for s in snaps] == ["intent:travel"]
     s = snaps[0]
+    assert s.derivation is not None
     assert s.derivation["event_ids"] == [1] and s.derivation["evidence_fact_ids"] == ["f1"]
     assert s.derivation["method"] == "opinion-workflow"
     assert s.derivation["fact_summaries"] == ["searched 'tokyo'"]
@@ -127,9 +128,10 @@ def _snap(trait: str) -> TraitSnapshot:
 
 
 async def test_review_drops_and_downgrades() -> None:
-    snaps = [_snap("intent:travel"), _snap("trait:overreach")]
+    snaps = [_snap("intent:travel"), _snap("trait:overreach"), _snap("interest:rust")]
 
     async def fake(_prompt: str) -> str:
+        # fake review only mentions the first two; "interest:rust" is unreviewed
         return (
             '{"reviews": [{"trait": "intent:travel", "keep": true, "confidence_adjustment": -0.1, '
             '"reason": "well supported"}, {"trait": "trait:overreach", "keep": false, '
@@ -137,9 +139,27 @@ async def test_review_drops_and_downgrades() -> None:
         )
 
     kept = await review_opinions(snaps, fake)
-    assert [s.trait for s in kept] == ["intent:travel"]
-    assert kept[0].confidence == 0.7  # 0.8 - 0.1
-    assert kept[0].derivation["review"]["reason"] == "well supported"
+    assert [s.trait for s in kept] == ["intent:travel", "interest:rust"]
+    travel = next(s for s in kept if s.trait == "intent:travel")
+    assert travel.confidence == 0.7  # 0.8 - 0.1
+    assert travel.derivation is not None
+    assert travel.derivation["review"]["reason"] == "well supported"
+    assert travel.derivation["review"]["confidence_adjustment"] == -0.1
+    # Unreviewed opinion survives untouched, with no review key recorded.
+    rust = next(s for s in kept if s.trait == "interest:rust")
+    assert "interest:rust" in [s.trait for s in kept]
+    assert "review" not in (rust.derivation or {})  # untouched, kept as-is
+
+
+async def test_review_positive_adjustment_cannot_raise_confidence() -> None:
+    snaps = [_snap("intent:travel")]  # _snap sets confidence 0.8
+
+    async def fake(_p: str) -> str:
+        return ('{"reviews": [{"trait": "intent:travel", "keep": true, '
+                '"confidence_adjustment": 0.3}]}')
+
+    kept = await review_opinions(snaps, fake)
+    assert kept[0].confidence == 0.8  # clamped to 0; never raised to 1.1
 
 
 async def test_workflow_run_persists_reviewed_opinions(
@@ -162,7 +182,9 @@ async def test_workflow_run_persists_reviewed_opinions(
     out = await wf.run(facts)
     assert [s.trait for s in out] == ["intent:travel"]
     current = {s.trait: s for s in await model.current_model()}
-    assert current["intent:travel"].derivation["event_ids"] == [1]
+    snap = current["intent:travel"]
+    assert snap.derivation is not None
+    assert snap.derivation["event_ids"] == [1]
 
 
 async def test_workflow_run_empty_facts_is_noop(

@@ -182,7 +182,7 @@ async def review_opinions(snaps: list[TraitSnapshot], fn: LlmFn) -> list[TraitSn
         except (TypeError, ValueError):
             adj = 0.0
         derivation = dict(s.derivation or {})
-        derivation["review"] = {"reason": str(r.get("reason") or "")}
+        derivation["review"] = {"reason": str(r.get("reason") or ""), "confidence_adjustment": adj}
         kept.append(
             TraitSnapshot(
                 trait=s.trait,
