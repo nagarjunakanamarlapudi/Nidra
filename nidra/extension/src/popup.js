@@ -112,18 +112,38 @@ function showTab(which) {
   }
 }
 
+async function runOpinions() {
+  const out = $("#dream-out");
+  out.innerHTML = '<p class="empty">🧠 Grounding opinions from your activity — this can take ~30–60s…</p>';
+  let cfg = {};
+  try { cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" }); } catch {}
+  if (!cfg.backendUrl) {
+    out.innerHTML = '<p class="empty">Set the backend URL in options to form opinions.</p>';
+    return;
+  }
+  const base = cfg.backendUrl.replace(/\/$/, "");
+  const headers = cfg.appToken ? { authorization: "Bearer " + cfg.appToken } : {};
+  try {
+    const res = await (await fetch(base + "/opinions/refresh", { method: "POST", headers })).json();
+    out.innerHTML =
+      `<p class="empty">🧠 Formed <b>${res.traits ?? 0}</b> opinions from <b>${res.facts ?? 0}</b> facts. ` +
+      'Ask Pragya “what do you know about me?” to see them.</p>';
+  } catch {
+    out.innerHTML = '<p class="empty">Couldn\'t reach the backend. Make sure the Pragya backend is running.</p>';
+  }
+}
+
 async function runDream() {
   const out = $("#dream-out");
-  out.innerHTML = '<p class="empty">💤 Refreshing opinions, then dreaming on-device — ~10–20s…</p>';
+  out.innerHTML = '<p class="empty">🌙 Dreaming on top of your opinions — ~10–20s…</p>';
   let cfg = {};
   try { cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" }); } catch {}
 
   if (cfg.backendUrl) {
-    // New pipeline: ground opinions from signals, dream on top, then list dreams.
+    // Dream on top of the opinions already formed (use the 🧠 button first), then list dreams.
     const base = cfg.backendUrl.replace(/\/$/, "");
     const headers = cfg.appToken ? { authorization: "Bearer " + cfg.appToken } : {};
     try {
-      await fetch(base + "/opinions/refresh", { method: "POST", headers });
       await fetch(base + "/dreams/run", { method: "POST", headers });
       const data = await (await fetch(base + "/dreams", { headers })).json();
       renderDreams(data.dreams || []);
@@ -216,6 +236,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   $("#clear").addEventListener("click", async () => { await api.runtime.sendMessage({ type: "nidra-clear" }); refresh(); });
   $("#refresh").addEventListener("click", refresh);
+  $("#opinions-btn").addEventListener("click", runOpinions);
   $("#dream").addEventListener("click", runDream);
   $("#tab-dreams").addEventListener("click", () => showTab("dreams"));
   $("#tab-opinions").addEventListener("click", () => showTab("opinions"));

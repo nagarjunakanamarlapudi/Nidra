@@ -97,9 +97,30 @@
       $("#" + t).classList.toggle("hidden", which !== t);
     }
   }
+  async function runOpinions() {
+    const out = $("#dream-out");
+    out.innerHTML = '<p class="empty">\u{1F9E0} Grounding opinions from your activity \u2014 this can take ~30\u201360s\u2026</p>';
+    let cfg = {};
+    try {
+      cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" });
+    } catch {
+    }
+    if (!cfg.backendUrl) {
+      out.innerHTML = '<p class="empty">Set the backend URL in options to form opinions.</p>';
+      return;
+    }
+    const base = cfg.backendUrl.replace(/\/$/, "");
+    const headers = cfg.appToken ? { authorization: "Bearer " + cfg.appToken } : {};
+    try {
+      const res = await (await fetch(base + "/opinions/refresh", { method: "POST", headers })).json();
+      out.innerHTML = `<p class="empty">\u{1F9E0} Formed <b>${res.traits ?? 0}</b> opinions from <b>${res.facts ?? 0}</b> facts. Ask Pragya \u201Cwhat do you know about me?\u201D to see them.</p>`;
+    } catch {
+      out.innerHTML = `<p class="empty">Couldn't reach the backend. Make sure the Pragya backend is running.</p>`;
+    }
+  }
   async function runDream() {
     const out = $("#dream-out");
-    out.innerHTML = '<p class="empty">\u{1F4A4} Refreshing opinions, then dreaming on-device \u2014 ~10\u201320s\u2026</p>';
+    out.innerHTML = '<p class="empty">\u{1F319} Dreaming on top of your opinions \u2014 ~10\u201320s\u2026</p>';
     let cfg = {};
     try {
       cfg = await api.runtime.sendMessage({ type: "nidra-getConfig" });
@@ -109,7 +130,6 @@
       const base = cfg.backendUrl.replace(/\/$/, "");
       const headers = cfg.appToken ? { authorization: "Bearer " + cfg.appToken } : {};
       try {
-        await fetch(base + "/opinions/refresh", { method: "POST", headers });
         await fetch(base + "/dreams/run", { method: "POST", headers });
         const data = await (await fetch(base + "/dreams", { headers })).json();
         renderDreams(data.dreams || []);
@@ -197,6 +217,7 @@
       refresh();
     });
     $("#refresh").addEventListener("click", refresh);
+    $("#opinions-btn").addEventListener("click", runOpinions);
     $("#dream").addEventListener("click", runDream);
     $("#tab-dreams").addEventListener("click", () => showTab("dreams"));
     $("#tab-opinions").addEventListener("click", () => showTab("opinions"));
