@@ -58,31 +58,43 @@ flowchart TD
   Q[("query tools:\ncalendar · browsing · email · memory")] -. available to .- M
 ```
 
-### 2.1 The agent loop is engine-agnostic (works with the `claude-code` default)
+### 2.1 Reuse the existing tool-using engines — we write NO loop
 
-The opinion-maker is driven by a **small orchestrated ReAct loop** in our code, over the
-neutral `CompletionFn` (prompt → text). Each turn the model returns JSON that is **either**:
+The repo already has tool-using agents; the opinion-maker reuses them rather than
+hand-rolling a ReAct loop:
 
-- an **action** — `{"action": "query_calendar", "args": {"days_back": 90, "days_ahead": 60}}` — or
-- the **final** result — `{"opinions": [{"trait","value","confidence","evidence_fact_ids"}]}`.
+- **`LoopEngine`** (`agent/core.py`) takes a `ToolRegistry` and runs the model↔tool loop via
+  the provider's native `tool_calls` — for the `anthropic-api` / `openai-api` / `ollama` brains.
+- **`ClaudeCodeEngine`** (`agent/claude_code_engine.py`) takes `tools: list[Tool]`, exposes
+  them through an in-process **MCP server** (`create_sdk_mcp_server`), and the Claude Code SDK
+  runs its **own** agentic loop — this is the **`claude-code` default, and it needs no API key**.
+- **`CodexEngine`** exposes tools via an MCP server too.
+- **`build_engine()`** (`agent/factory.py`) already selects the right engine for
+  `settings.agent_engine` **and** wires a tool list in.
 
-On an action we run the tool, append its result as an observation, and loop; on final we
-stop. Bounded by `max_steps` (default 6); if the model never emits `opinions`, we terminate
-gracefully with whatever it produced (possibly none).
+The opinion-maker therefore gets a **dedicated engine instance** built for the configured
+brain, wired with the **query tools** (§2.2) and an opinion-forming system prompt. We call
+`engine.respond([], "<form opinions>")`; the engine drives its **own** loop, calling our
+tools, and returns final text we parse into proposed opinions. **No loop code is written by
+us** — we add only the tools, the evidence ledger, and the cite-validation (mostly already
+built).
 
-**Decision (documented for review):** we drive the loop ourselves over a text-action
-protocol rather than using `LoopEngine`'s native `tool_calls`. Reason: the user's default
-brain is `claude-code` (`ClaudeCodeEngine`), a CLI wrapper that does **not** plug into
-`LoopEngine`'s provider/tool-call model. A text-action loop works with **every** engine
-(claude-code, codex, api, ollama) and stays fully testable (inject a `CompletionFn` that
-returns a scripted action→…→final sequence). Tradeoff: text-action parsing is slightly less
-robust than a provider's structured tool-calls; acceptable, and a future optimization can
-use native tool-calls when the brain supports them.
+To avoid duplicating `build_engine`'s engine-selection `if/elif`, extract that switch into a
+small shared helper (`_make_engine(settings, *, tools, system_prompt)`) reused by both
+`build_engine` and a new `build_opinion_engine(settings, *, tools)`.
+
+**Testability:** the existing `ScriptedChatProvider` can return a `ChatResult` with
+`tool_calls` then a final `ChatResult`, so the opinion-maker is tested deterministically
+through `LoopEngine` (scripted: tool-call turn → observation → final opinions), exactly like
+the chat tests. `max_turns`/`max_steps` already bound the loop in each engine.
 
 ### 2.2 Query tools (the investigation surface)
 
-Each tool is a thin wrapper over the **existing fact collectors** (reused from `facts.py`),
-returning `Fact`s **with their source ids**:
+Each tool is a standard **`Tool`** object (`agent/tools.py` — the same abstraction as the
+existing `recent_browsing` / `about_me` chat tools), whose `handler` runs the corresponding
+**`facts.py` collector**, appends the returned `Fact`s to the run's evidence ledger (§2.3),
+and returns a text observation listing those facts **with their ledger ids** so the model can
+cite them:
 
 | Tool | Args | Returns |
 |---|---|---|
@@ -154,7 +166,7 @@ def extract_json(text: str) -> dict[str, Any]           # ONE canonical copy
 ### 4.3 Target layout
 ```
 agent/completion.py            ← CompletionFn, engine_completion_fn, ollama_completion_fn, extract_json
-user_model/opinion_agent.py    ← the ReAct loop + tools + evidence ledger   (NEW)
+user_model/opinion_agent.py    ← query Tools + evidence ledger + engine wiring (NO loop of our own) (NEW)
 user_model/opinion_workflow.py → keeps validate_citations / review_opinions / calibrate; run() drives the agent
 user_model/dreamer.py          → dreams only; imports agent/completion
 user_model/facts.py            → Fact + collectors (now also used as tool bodies)
@@ -169,10 +181,10 @@ connectors/google_calendar/connector.py → + sync_days_back
 - **Reused:** `facts.py` collectors (become the tool bodies); `validate_citations`,
   `review_opinions`, `calibrate`; `UserModelStore` + `derivation` column; the engine
   selection + 503 guard pattern.
-- **Reworked:** `FactDigestBuilder` (static push) → query tools + evidence ledger;
-  `group_facts`/`form_opinions` (static two-stage) → the **ReAct former loop**
-  (`opinion_agent.py`); the route → split into `routes/opinions.py` and driven through the
-  agent.
+- **Reworked:** `FactDigestBuilder` (static push) → query `Tool`s + evidence ledger;
+  `group_facts`/`form_opinions` (static two-stage) → a dedicated tool-wired engine that runs
+  its own loop (`opinion_agent.py` holds the tools/ledger/engine wiring, not a loop); the
+  route → split into `routes/opinions.py` and driven through the agent.
 - **Retired:** the legacy connector dreamer duplication; the static digest builder; the
   separate grouping stage (the agent organizes its own investigation).
 
@@ -180,11 +192,12 @@ connectors/google_calendar/connector.py → + sync_days_back
 
 - **Query tools:** each returns faithful `Fact`s with correct ids/refs; graceful when a
   source is empty/unconfigured.
-- **ReAct loop:** inject a `CompletionFn` returning a scripted sequence — e.g.
-  `action: query_calendar` → observation → `final: opinions[cite f-ids]`. Assert the right
-  tool ran, the ledger captured the facts, and cited opinions persisted with the chain.
-  Cover: model emits final immediately (no tools); model loops twice; model never finalizes
-  (graceful stop at `max_steps`); model emits garbage (no crash).
+- **Engine tool loop:** drive the opinion-maker through `LoopEngine` + a `ScriptedChatProvider`
+  scripted as `tool_calls(query_calendar)` → observation → final `ChatResult` with the
+  opinions JSON. Assert the right tool ran, the ledger captured the facts, and cited opinions
+  persisted with the chain. Cover: model emits final immediately (no tools); model calls two
+  tools; model never finalizes (engine `max_steps`/`max_turns` bounds it); model emits garbage
+  (no crash).
 - **Evidence ledger / validator:** citation to a real ledger id survives; to a non-existent
   id is dropped; confidence capped (already covered, keep).
 - **Reviewer:** drop / lower-only / unreviewed-kept (already covered, keep).
@@ -197,10 +210,12 @@ connectors/google_calendar/connector.py → + sync_days_back
 
 ## 7. Decisions log
 
-- The opinion-maker is a **tool-using ReAct agent**, not a static-digest consumer — it
-  **pulls** what it needs.
-- The loop is **engine-agnostic** (text-action protocol over `CompletionFn`) so it runs on
-  the `claude-code` default; native tool-calls are a future optimization.
+- The opinion-maker is a **tool-using agent**, not a static-digest consumer — it **pulls**
+  what it needs.
+- **We write no ReAct loop.** We reuse the repo's existing tool-using engines via a dedicated
+  engine instance + `Tool` objects. `claude-code` (the default) already exposes our tools via
+  its in-process MCP server and runs its own loop — **no API key required**; `LoopEngine`
+  does the same via native tool-calls for the api/ollama brains.
 - **Grounding is preserved** by a per-run **evidence ledger** + the existing deterministic
   cite-or-omit validator.
 - **Calendar carries past + future** (connector `sync_days_back` default 90).
@@ -212,4 +227,3 @@ connectors/google_calendar/connector.py → + sync_days_back
 
 - Finance fact collector / `query_finance` tool.
 - Snapshot retention/decay.
-- Native tool-call loop for brains that support it.
