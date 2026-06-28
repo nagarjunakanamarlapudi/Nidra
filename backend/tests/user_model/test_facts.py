@@ -25,10 +25,13 @@ def test_collect_browser_facts_shapes_searches_and_choices() -> None:
         SimpleNamespace(id=3, event_type="interaction",
                         data={"action": "choose", "group": "Payment methods", "value": "Apple Pay"},
                         title=None, domain="sixt.com", metrics=None),
+        SimpleNamespace(id=4, event_type="action", title=None, domain="shop.com",
+                        metrics=None, data={"milestone": "reached_checkout", "funnel": "purchase"}),
     ]
     facts = collect_browser_facts(rows)
     kinds = {f.kind for f in facts}
     assert {"search", "reading", "choice"} <= kinds
+    assert "action" in kinds
     search = next(f for f in facts if f.kind == "search")
     assert "flights to tokyo" in search.summary and search.event_ids == [1]
     assert search.source == "browser"

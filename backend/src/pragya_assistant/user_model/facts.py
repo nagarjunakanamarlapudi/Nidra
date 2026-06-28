@@ -159,10 +159,10 @@ class FactDigestBuilder:
             collected += collect_calendar_facts(events)
         if self._email is not None:
             collected += collect_email_facts(await self._email.list_recent(20))
-        if self._prefs is not None and self._tasks is not None:
-            collected += collect_memory_facts(
-                await self._prefs.get_preferences(), await self._tasks.list_tasks()
-            )
+        prefs = await self._prefs.get_preferences() if self._prefs is not None else {}
+        tasks = await self._tasks.list_tasks() if self._tasks is not None else []
+        if prefs or tasks:
+            collected += collect_memory_facts(prefs, tasks)
         for i, f in enumerate(collected, start=1):
             f.id = f"f{i}"
         return collected
